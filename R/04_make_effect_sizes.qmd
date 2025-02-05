@@ -1,0 +1,457 @@
+---
+title: "making effect sizes"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-packages}
+library(DHARMa)
+library(effectsize)
+library(FactoMineR)
+library(MuMIn)
+library(metafor)
+library(parameters)
+library(performance)
+library(sf)
+library(spaMM)
+library(tidyverse)
+
+library(here)
+```
+
+We start by loading the raw files as well as the built-up % calculated in `02_get_GHSL_buffers_highres.qmd`:
+
+```{r load-files}
+raw_records <- read_csv(here("data", "SPINCITY_raw_spiders.csv"))
+urban_areas <- read_csv(here("data", "SPINCITY_area_names.csv"))
+geoflagged <- read_csv(here("data", "SPINCITY_geoflagged.csv"))
+
+builtup <- read_csv(here("data", "GHSL_10m_BUILT_spiders.csv")) 
+
+polygons <- read_sf(here("data","GHSL_1000m","GHSL_SMOD_UC_DUC_2020_polygons_V2_0_R2023A.gpkg"))
+```
+
+[NEED TO ADD SUMMARY INFO HERE]
+
+We then need to filter out the data points that we geoflagged (too far from the city they are supposed to be matched too, in another urban area altogether, and one with invalid coordinates _ European coordinates for an American city).
+
+We also remove one spider that had been collected way outside of the spider reproductive period defined widely (in late December!)
+
+```{r record-filtering}
+flagged_to_remove <- geoflagged |> filter(GEOFLAG_lvl == 2)
+
+records_filtered_space <- raw_records |> 
+  filter(!(ID %in% flagged_to_remove$ID))
+
+records_filtered <- records_filtered_space |>
+  filter(month(DATE) %in% c(7:11))
+```
+
+We then create columns with the coordinates of the individual records from degrees to m, for use in spatial autocorrelation diagnostics later on. At the same time, we also make a column about whether the record was made inside the focal urban area sensu GHSL, or outside (while you can have valid urbanization gradients using only records made inside a UC/DUC, especially given these are defined quite coarsely, this is still a useful information to have)
+
+```{r get-coords-mollweide}
+coords_m <- st_as_sf(records_filtered, coords = c("LONGITUDE", "LATITUDE"), crs = "wgs84") |>
+  st_transform(crs = "+proj=moll")
+
+records_filtered_mollweide <- records_filtered |>
+  mutate(
+    xcoord = st_coordinates(coords_m)[, 1],
+    ycoord = st_coordinates(coords_m)[, 2],
+    is_in_UC_DUC = ID %in% st_intersection(x=coords_m,y=polygons)$ID # some warning is expected
+  )
+```
+
+We then join the spider records with the builtup information and with the standardized names of the urban areas (as opposed to the unstandardized ones used during data entry). We rescale some variables and put some time information in more useful formats
+
+```{r data-filtering}
+data <- records_filtered_mollweide |>
+  left_join(urban_areas) |> 
+  left_join(builtup) |>
+  mutate(
+    abdomen_brightness_cor = abdomen_brightness_cor / 100,
+    abdomen_area = abdomen_area / 100, ## mm2 to cm2
+    spider_length = spider_length / 10 ## mm to cm
+  ) |>
+  mutate(year = year(DATE),yday=yday(DATE)) |> 
+  mutate(yday_prop = case_when(leap_year(year)~yday/366,
+                               TRUE~yday/365))
+```
+
+The general idea for effect size estimation is : one trait, one urban area, one year = one effect size
+However, in Vancouver in 2022, two research teams explored independently two different parts of the urban area.
+
+```{r show-vancouver-gradients}
+data |> 
+  filter(urban_area=="Vancouver") |> 
+  ggplot()+
+  geom_point(aes(LONGITUDE,LATITUDE,col=LONGITUDE<(-123.1)))+
+  facet_wrap(~year)
+```
+
+
+We decided to consider these as two separate sources of effect sizes. We add a `team` variable that's 1 by default and incremented for cities with multiple teams, to be able to sort these out
+
+```{r split-vancouver-gradients}
+data <- data |> 
+  mutate(team = case_when(
+    urban_area=="Vancouver" & year == 2022 & LONGITUDE <(-123.1) ~ 2,
+    TRUE ~1
+  ))
+
+data |> 
+  filter(urban_area=="Vancouver") |> 
+  ggplot()+
+  geom_point(aes(LONGITUDE,LATITUDE,col=factor(team)))+
+  facet_wrap(~year)
+```
+
+
+Now that we have our data in order, we can format them so it's easier to get all effects sizes programmatically. This will take a bit of code, we've broken it down in chunks
+
+# Prepare list-columns
+
+We first create log-transformed columns for abdomen and body length, to use in the body condition regressions, and then select only the columns we'll want to keep
+
+```{r step1}
+step1 <- data |>
+  mutate(
+    log_size_predictor = log(spider_length),
+    log_abdomen = log(abdomen_area)
+  ) |>
+  select(urban_area, team, year,yday,yday_prop,
+    ID,
+    xcoord, ycoord,
+    is_in_UC_DUC,
+    matches("pBUILT_[[:digit:]]+"),
+    spider_length,
+    mesh_size,radius,
+    log_abdomen,
+    brightness = abdomen_brightness_cor,
+    log_size_predictor
+  )
+```
+
+From there we move the columns containing the response variables from the wide to the long format, 
+and then move the columns containing the built-up at various buffers also from the wide to the long format. (at the same time we also work a way to extract buffer width from the names of the builtup columns)
+
+We end up with one row = one spider, one trait, one buffer width (so each spider occupies multiple rows in the table).
+
+We create a column grouping together spiders in the same 100 by 100m pixel (this will be used later to determine if the spiders are spread out enough)
+```{r step2}
+step2 <- step1 |>
+  pivot_longer(
+    cols = c(
+      spider_length,
+      mesh_size,radius,
+      log_abdomen,
+      brightness
+    ),
+    names_to = "response_name",
+    values_to = "response_value"
+  ) |>
+  pivot_longer(
+    cols = c(
+      matches("pBUILT_[[:digit:]]+")
+    ),
+    names_to = c("metric","scale"),
+    names_pattern = "([[:alpha:]]+)_([[:digit:]]+)",
+    values_to = "urban_value"
+  ) |>
+  pivot_wider(names_from=metric,values_from=urban_value) |> 
+  filter(!is.na(response_value)) |>
+  mutate(pixel = paste(floor(xcoord / 100), floor(ycoord / 100)))
+```
+
+We nest our dataset so that now one row = one potential effect size; data from individual spiders are nested in the newly created list-column
+
+We create a column that contains the basic formula that will be used in a linear model to obtain our effect size. It varies depending on whether the response is log(abdomen) (to get "body condition") or any other trait.
+For log(abdomen), since the model also includes log(size) as covariate, there is an additional NA removal step to ensure we keep only observations with both variables
+
+```{r step3}
+step3 <- step2 |>
+  group_by(
+    urban_area,
+    year,  team, response_name, scale
+  ) |>
+  nest() |>
+  mutate(formula = case_when(
+    response_name == "log_abdomen" ~ "response_value~log_size_predictor + pBUILT",
+    TRUE ~ "response_value~pBUILT"
+  )) |>
+  mutate(complete_obs = map(
+    .x = data,
+    .f = function(.x) {
+      if (response_name == "log_abdomen") { ### traits with size covariates
+        .x |> filter(!is.na(log_size_predictor))
+      } else {
+        .x
+      }
+    }
+  ))
+```
+
+Then we add a final sorting step: we only estimate effect sizes from combinations with enough spider records spread out over enough space (criteria here are admittedly arbitrary, but seem fine enough)
+
+```{r step4}
+step4 <- step3 |>
+  mutate(check_obs = map(
+    .x = complete_obs,
+    .f = function(.x){
+      tibble(
+        N_pixels = length(unique(.x$pixel)),
+        N_complete_obs = dim(.x)[1]#,
+        #minurban = min(.x$pBUILT),
+        #maxurban = max(.x$pBUILT)
+      )
+    }
+  ))|>
+  unnest(check_obs) 
+```
+
+
+```{r step5}
+step5 <- step4 |>
+  filter((N_complete_obs >= 10) & (N_pixels >=5)) #(minurban < 0.1) & ((maxurban - minurban) > 0.1)) # & (N_pixels > 5) ?
+```
+
+Now that we made sure we have sorted everything, we can calculate a couple synthetic variables that we will not use here, but might be useful as moderators later
+
+```{r step6}
+step6 <- step5 |>
+  mutate(
+    mean_yday = map(.x=complete_obs,.f=function(.x){
+    mean(.x$yday)
+  }),
+    mean_yday_prop = map(.x=complete_obs,.f=function(.x){
+    mean(.x$yday_prop)
+  }),
+    p_in_UC_DUC = map(.x = complete_obs, .f = function(.x) {
+      mean(as.numeric(.x$is_in_UC_DUC))
+    })
+  )
+```
+
+before actually fitting the models, let's stop a bit and summarise the numbers of spiders at each filtering step, to potentially do a flowchart later
+
+```{r summaries-for-flowchart}
+table(polygons$type)
+
+table(geoflagged$GEOFLAG_remarks)
+
+length(unique(paste(data$urban_area,data$year,data$team)))
+
+data |> select(urban_area,year) |> 
+  distinct() |> 
+  group_by(urban_area) |> 
+  count(name="Number_of_years") |> group_by(Number_of_years) |> count()
+
+summarize_N_by_traits = function(df){
+
+df |>
+  ungroup() |> 
+  select(urban_area,team,year,response_name,N_complete_obs) |> 
+  distinct() |> 
+  group_by(response_name) |> 
+  summarise(N_cities=length(unique(urban_area)),
+        N_ES = length(N_complete_obs),
+         Ntotal = sum(N_complete_obs),
+         Nmin = min(N_complete_obs),
+         Nmean = mean(N_complete_obs),
+         Nmedian = median(N_complete_obs),
+         Nmax= max(N_complete_obs)) |> 
+  print(n=Inf)
+}
+
+tibble(
+  what=c("total raw records","after spatial filtering","after temporal filtering","after removing obs with all NAs at traits"),
+  N=c(dim(raw_records)[1],dim(records_filtered_space)[1],dim(records_filtered)[1],length(unique(step2$ID)))
+)
+
+summarize_N_by_traits(step4) # before the filtering by minimal sample size and minimal number of pixels
+summarize_N_by_traits(step6) # after
+```
+
+
+
+# Make effect sizes
+
+```{r step7}
+step7 <- step6  |>
+  mutate(model_std = map2(
+    .x = complete_obs,
+    .y = formula,
+    .f = function(.x, .y) {
+      lm(as.formula(.y), data = standardize(.x))
+    }
+  )) |>
+  mutate(AIC_baseline = map(.x=model_std,.f=~.x |> AIC()),
+         AICc_baseline = map(.x=model_std,.f=~.x |> AICc())
+         ) 
+```
+(we fit models on standardized datasets so that we avoid some convergence issues for the models with spatial autocorrelation later on, but since we're using correlation as effect sizes based on t-values, this changes nothing and we don't have to worry about back-transformations or anything)
+
+
+```{r step8}
+step8 <- step7 |> 
+  mutate(complete_obs = map(
+    .x = complete_obs,
+    .f = ~ .x |> mutate(
+      xcoord_scaled = (xcoord - mean(xcoord)) / 1000, # not needed because stdization??
+      ycoord_scaled = (ycoord - mean(ycoord)) / 1000
+    )
+  ))|>
+  mutate(
+    model_Matern = map2(
+      .x = complete_obs,
+      .y = formula,
+      .f = function(.x, .y) {
+        spaMM::fitme(as.formula(paste0(.y, "+Matern(1|xcoord_scaled+ycoord_scaled)")),
+          # method="ML",
+          data = standardize(.x)
+        )
+      }
+    )
+  )|>
+  mutate(AIC_spatial = map(.x=model_Matern,.f=function(.x){extractAIC(.x)["AIC"]})
+         )
+```
+
+```{r function_diagnostics}
+diagnostics <- function(data, model) {
+  require(DHARMa)
+  simres <- simulate_residuals(model)
+  uniftest <- testUniformity(simres, plot = F)
+  disptest <- testDispersion(simres, plot = F)
+  outliertest <- testOutliers(simres, plot = F)
+  # for spatial correlation we need to group together residuals with same coordinates
+  data$group <- paste(data$xcoord, data$ycoord, sep = "_")
+  recalcres <- recalculateResiduals(simres, group = data$group)
+  recalcres_coords <- data |>
+    select(xcoord, ycoord) |>
+    distinct()
+  spatialtest <- testSpatialAutocorrelation(recalcres, x = recalcres_coords$xcoord, y = recalcres_coords$ycoord, plot = F)
+
+  tibble(
+    unif_p.value = uniftest$p.value,
+    disp_p.value = disptest$p.value,
+    outlier_p.value = outliertest$p.value,
+    spatial_p.value = spatialtest$p.value
+  )
+}
+
+## IMPORTANT NB: see help for testSpatialAutocorrelation
+## it's a **known** issue that for many packages (don't know if true for SPAMM)
+## simulateresiduals on a model that accounts for autocorrelation
+## will ignore the correlation term and still says there is autocorrelation
+## it will also lead to spurious residual problems in the other tests
+## exactly what we get if we use diagnostics() on the Matern models
+```
+
+```{r step9}
+step9 <- step8 |>
+  mutate(diags = map2(
+    .x = complete_obs, .y = model_std,
+    .f = function(.x, .y) {
+      diagnostics(data = .x, model = .y)
+    }
+  )) |>
+  mutate(is.autocor.spatial = map(
+    .x = diags,
+    .f = function(.x) {
+      case_when(
+        .x$spatial_p.value < 0.05 ~ TRUE,
+        TRUE ~ FALSE
+      )
+    }
+  ) |>
+    unlist())
+```
+check non spatial assumptions more finely?? explore plots of those with p >0.05 to check??
+
+```{r extract-coefs-function}
+extract_coefs <- function(.x) {
+      parms <- model_parameters(.x)
+      output <- tibble(
+        df_error = parms$df_error[which(parms$Parameter == "pBUILT")],
+        coef_urban = parms$Coefficient[which(parms$Parameter == "pBUILT")],
+        se_urban = parms$SE[which(parms$Parameter == "pBUILT")],
+        t_urban = parms$t[which(parms$Parameter == "pBUILT")],
+        p_urban = parms$p[which(parms$Parameter == "pBUILT")]
+      )
+
+      return(output)
+    }
+```
+
+
+```{r step10}
+step10 <- step9 |>
+  mutate(coefs = map(
+    .x = model_std,
+    .f = extract_coefs
+  ),
+  coefs_spatial = map(
+    .x = model_Matern,
+    .f = extract_coefs
+  ))
+```
+
+```{r step11}
+ES_type = "ZPCOR"
+
+step11 <- step10  |>
+  mutate(ES_baseline = map2(
+    .x = coefs, .y = N_complete_obs,
+    .f = function(.x,.y, ES_type="ZPCOR") {
+      Nparams <- (.y - .x$df_error) - 1
+      ES <- escalc(
+        measure = ES_type, ti = .x$t_urban, ni = .y, mi = Nparams,
+        var.names = c("yi_baseline", "vi_baseline")
+      )
+
+      return(ES)
+    }
+  ),
+  ES_spatial = map2(
+    .x = coefs_spatial, .y = N_complete_obs,
+    .f = function(.x,.y, ES_type="ZPCOR") {
+      Nparams <- (.y - .x$df_error) - 1
+      ES <- escalc(
+        measure = ES_type, ti = .x$t_urban, ni = .y, mi = Nparams,
+        var.names = c("yi_spatial", "vi_spatial")
+      )
+
+      return(ES)
+    }
+  ))
+```
+
+
+```{r step12}
+step12 <- step11 |>
+  select(
+    urban_area, year,team,
+    response_name, 
+    urban_scale=scale, 
+    p_in_UC_DUC,mean_yday,mean_yday_prop,
+    ES_baseline,ES_spatial, 
+    AIC_baseline,AICc_baseline,AIC_spatial,
+    is.autocor.spatial,
+    N_complete_obs
+  )|>
+  unnest(c(ES_baseline,ES_spatial, 
+    AIC_baseline,AICc_baseline,AIC_spatial,p_in_UC_DUC,mean_yday, mean_yday_prop)) |>
+  ungroup() |> 
+  mutate(EStype=ES_type)
+## needs to double check that yes correct ni is df for t to zr
+## given the use of partial corr coefs
+
+## r to z fisher transformation is stabilising
+## mention in Harrison MEE 2011 paper
+```
+
+```{r save-final-EStable}
+write_csv(step12, here("data","effect_sizes.csv"))
+```
+

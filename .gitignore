@@ -1,0 +1,15 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.nc
+*.tif
+*.ovr
+*.xml
+data/GHSL_1000m/GHSL_Data_Package_2023.pdf
+data/GHSL_10m/LAND/desktop.ini
+data/GHSL_10m/LAND.vrt
+data/GHSL_10m/BUILT-S/GHSL_Data_Package_2023_light.pdf
+data/GHSL_10m/LAND/GHSL_Data_Package_2022_light.pdf
+data/GHSL_10m/BUILT-S/desktop.ini
+data/GHSL_10m/BUILT-S.vrt

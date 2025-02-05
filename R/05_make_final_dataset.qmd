@@ -1,0 +1,58 @@
+---
+title: "combine various data in one table for meta-analyses"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-packages}
+library(tidyverse)
+library(sf)
+library(here)
+```
+
+We start by loading all the data tables we prepped through the previous scripts
+
+```{r load-data}
+effect_sizes <- read_csv(here("data", "effect_sizes.csv"))
+urban_info <- read_csv(here("data", "GHSL_urban_summary.csv"))
+human_modif <- read_csv(here("data","human_modification_50km_outside.csv"))
+CRUtmp <- read_csv(here("data", "CRUtmp_1991-2020.csv"))
+treecover <- read_csv(here("data","Tolan_et_al_2024_tree_cover.csv"))
+
+coordinates <- read_sf(here("data","GHSL_1000m","GHSL_SMOD_UC_DUC_2020_polygons_V2_0_R2023A.gpkg")) |> 
+  sf::st_centroid() |> 
+  st_transform(crs="wgs84") |> 
+  mutate(lon=st_coordinates(geom)[,1],
+         lat=st_coordinates(geom)[,2]) |> 
+  as_tibble() |> 
+  select(urban_area,lon,lat)
+```
+
+to then combine them
+
+```{r make-data}
+data_allscales <- left_join(effect_sizes, urban_info) |> 
+  left_join(human_modif) |> 
+  left_join(treecover) |> 
+  left_join(CRUtmp) |> 
+  left_join(coordinates) |> 
+  mutate(
+    study = paste(urban_area, year, team),
+    mean_pTREE = sum_tree_km2 / area_LAND_km2,
+    realm = case_when(
+    urban_area %in% c("Montreal","Vancouver","SF Bay Area","Santa Cruz","St. John's")~"02-Nearctic",
+    TRUE~"01-Palearctic"
+    )
+  ) |> 
+  mutate(study = case_when(urban_area=="Vancouver" & year == 2022~study,
+         TRUE~str_replace(study,"[:digit:]$", "  "))
+  ) # to avoid unnecessary numbers in plots, Vancouver 2022 is only year/city combination with multiples
+```
+
+that we can save
+
+```{r save-data}
+write_csv(data_allscales,here("data","final_dataset_meta_analyses.csv"))
+```
+

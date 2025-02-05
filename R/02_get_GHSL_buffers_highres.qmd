@@ -1,0 +1,136 @@
+---
+title: "Getting GHSL built-up and land areas around spider locations"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-packages}
+library(tidyverse)
+library(sf)
+library(terra)
+library(units)
+library(stars)
+library(here)
+```
+
+The `data/GHSL_10m` folder and sub-folders is where to put `tif` tiles downloaded from the GHSL website (see `data/GHSL_10m/README.md` for more details). This code only runs if these files are there. If you are checking this directly from the archived repository (which does not contain a copy of these files as they are heavy), you can skip this code and go directly to the script files that use its `csv` output, a copy of which **is** archived in this repo.
+
+
+We create virtual rasters to combine the various tiles together...
+
+```{r make-virtual-rasters}
+BUILT_files <- list.files(here("data", "GHSL_10m", "BUILT-S"), pattern = ".tif$") 
+LAND_files <- list.files(here("data", "GHSL_10m", "LAND"), pattern = ".tif$")
+
+
+vrt(here("data", "GHSL_10m", "BUILT-S", BUILT_files),
+  here("data", "GHSL_10m", "BUILT-S.vrt"),
+  overwrite = TRUE
+)
+
+vrt(here("data", "GHSL_10m", "LAND", LAND_files),
+  here("data", "GHSL_10m", "LAND.vrt"),
+  overwrite = TRUE
+)
+```
+
+... and load them using the `stars` package:
+```{r load-virtual-rasters}
+stars_BUILT <- read_stars(here("data", "GHSL_10m", "BUILT-S.vrt"),proxy=TRUE)
+stars_LAND <- read_stars(here("data", "GHSL_10m", "LAND.vrt"),proxy=TRUE)
+```
+
+We load the spider observations:
+
+```{r load-observations}
+obs <- read_csv(here("data", "SPINCITY_raw_spiders.csv")) |>
+  select(ID, LONGITUDE, LATITUDE) |>
+  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = "WGS84") |>
+  st_transform(crs = st_crs(stars_BUILT))
+
+st_write(obs, here("data","SPINCITY_raw_spiders_mollweide.gpkg"),append=FALSE)
+```
+
+We then create a series of increasingly wider buffers around the points, and extract the mean values of `BUILT-S` and `LAND` in these buffers.
+
+We initialize this "manually" with the 50m radius buffers:
+
+```{r extract-local-values}
+buffers_50 <- st_buffer(x = obs, dist = set_units(50, "m"))
+
+BUILT_50 <- stars::st_extract(x = stars_BUILT, at = buffers_50, FUN = sum) |>
+  as_tibble() |>
+  select(-geometry) |>
+  rename_at(1, ~"BUILT_50")
+
+LAND_50 <- stars::st_extract(x = stars_LAND, at = buffers_50, FUN = sum) |>
+  as_tibble() |>
+  select(-geometry) |>
+  rename_at(1, ~"LAND_50")
+
+tab <- obs |>
+  cbind(BUILT_50, LAND_50)
+```
+
+
+Now that the table is created, we can increment through the various buffer sizes using a loop (this is not optimized or parallelized, and takes up to a few hours on a laptop):
+
+```{r set-buffer-sizes}
+step_width <- 100
+buffer_widths <- c(1:20) * step_width
+buffer_widths
+```
+
+```{r extract-buffer-values}
+for (i in 1:length(buffer_widths)) {
+  buffers_i <- st_buffer(x = obs, dist = set_units(buffer_widths[i], "m"))
+
+  built_i <- stars::st_extract(x = stars_BUILT, at = buffers_i, FUN = sum) |>
+    as_tibble() |>
+    select(-geometry) |>
+    rename_at(1, ~ paste0("BUILT_", buffer_widths[i]))
+
+  land_i <- stars::st_extract(x = stars_LAND, at = buffers_i, FUN = sum) |>
+    as_tibble() |>
+    select(-geometry) |>
+    rename_at(1, ~ paste0("LAND_", buffer_widths[i]))
+
+  tab <- tab |>
+    cbind(built_i, land_i)
+
+  print(paste0(buffer_widths[i], " m radius buffers done."))
+}
+```
+
+We use these values to get and save built-up proportions, both relative to buffer area (which we call "classic") and relative to actual land area, which is what we'll use since we have many points relatively close to coasts.
+(we don't save the proportions of land per buffer, but it's easy to get back through the two versions of built-up %)
+
+```{r make-proportions-built}
+tab_prop <- tab |>
+  as_tibble() |>
+  select(-geometry) |>
+  pivot_longer(
+    -c(ID),
+    names_to = c("var", "scale"),
+    names_pattern = "([[:alpha:]]+)_([[:digit:]]+)"
+  ) |>
+  pivot_wider(names_from = var, values_from = value) |>
+  mutate(scale = as.numeric(scale)) |>
+  mutate(area = pi * scale^2) |>
+  mutate(pBUILT_classic = BUILT / area, pBUILT = BUILT / LAND) |>
+  select(ID, scale, pBUILT, pBUILT_classic) |>
+  pivot_wider(
+    names_from = scale,
+    values_from = c(pBUILT, pBUILT_classic),
+    names_sep = "_"
+  )
+
+tab_prop
+```
+
+```{r save-proportions-built}
+tab_prop |>
+  write_csv(here("data", "GHSL_10m_BUILT_spiders.csv"))
+```
+

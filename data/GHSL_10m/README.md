@@ -1,0 +1,1 @@
+This folder should be where to put 10m resolution files downloaded from GHSL

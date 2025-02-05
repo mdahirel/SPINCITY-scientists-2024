@@ -1,0 +1,154 @@
+---
+title: "metaanalysis"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-packages}
+library(brms)
+library(metafor)
+library(tidyverse)
+library(here)
+library(patchwork)
+library(tidybayes)
+library(ggtext)
+
+options(mc.cores = 4)
+```
+
+We start by loading the final data table we made in previous script
+
+```{r load-data}
+data_allscales <- read_csv(here("data","final_dataset_meta_analyses.csv"))
+```
+
+
+```{r filter-data}
+data <- data_allscales |> 
+  group_by(response_name,urban_area,year, team) |> 
+  filter(AICc_baseline==min(AICc_baseline))|> 
+  mutate(yi = case_when(is.autocor.spatial~yi_spatial,TRUE~yi_baseline),
+         vi = case_when(is.autocor.spatial~vi_spatial,TRUE~vi_baseline)
+         )
+```
+
+see eg https://doi.org/10.1890/14-0362.1 for an example where they picked the largest ES across scales
+"When studies measured effects of wetland amount and forest amount at multiple spatial scales, we calculated an effect size for each variable at each scale. We then selected the largest estimate across scales (...)"
+
+```{r filter-data-alt}
+## an alt_approach to choosing ES, we first select for each scale whether the spatial or non spatial model should be retained
+## then we pick the model with the strongest ES
+## Can't use AIC on a mix of spatial and non-spatial models since AIC in spaMM seem to behave a bit differently (see their doc)
+data2<-data_allscales |> 
+  group_by(response_name,urban_area,year, team) |> 
+  mutate(yi = case_when(is.autocor.spatial~yi_spatial,TRUE~yi_baseline),
+         vi = case_when(is.autocor.spatial~vi_spatial,TRUE~vi_baseline)
+         ) |> 
+  filter(abs(yi)==max(abs(yi))) 
+```
+
+```{r}
+plot(data$yi,data2$yi)
+#the two methods give about the same results in most cases
+```
+
+# Bayesian metaanalysis
+
+
+
+```{r models-all-moderators}
+fit_metareg_all <- function(data,resp, adapt_delta=0.99, iter=2000, warmup=1000){
+  model <- brm(
+    yi|se(sqrt(vi))~ scale(annual_tmp) + scale(log(area_LAND_km2,10)) + 
+      scale(mean_pTREE) + scale(mean_human_modification_50km) + 
+      scale(mean_yday_prop) + 
+      (1| urban_area / study),
+    data=data |> filter(response_name==resp),
+    seed=42,
+    prior=c(
+        set_prior("normal(0,0.5)",class="Intercept"),
+        set_prior("normal(0,0.5)",class="b"),
+        set_prior("normal(0,0.5)",class="sd")
+    ),
+    control=list(adapt_delta=adapt_delta),
+    iter=iter,warmup=warmup
+)
+  return(model)
+}
+
+metareg_all_size <- fit_metareg_all(data,"spider_length")
+metareg_all_abdomen <- fit_metareg_all(data,"log_abdomen")
+metareg_all_radius <- fit_metareg_all(data,"radius")
+metareg_all_mesh <- fit_metareg_all(data,"mesh_size")
+```
+
+
+```{r}
+summary_metareg_all <-function(model,respname){
+  
+output <- as_draws_df(model,variable="^b_",regex=TRUE) |> 
+    pivot_longer(-c(.draw,.chain,.iteration))|> 
+    group_by(name) |> 
+    mean_qi() |> 
+    select(name,value,.lower,.upper) |> 
+    mutate(response=respname) 
+
+return(output)
+}
+```
+
+```{r models-all-moderators}
+suppltable <-rbind(
+summary_metareg_all(metareg_all_size,"spider length"),
+summary_metareg_all(metareg_all_abdomen,"relative abdomen area"),
+summary_metareg_all(metareg_all_mesh,"mesh width"),
+summary_metareg_all(metareg_all_radius,"web radius")
+) |>
+  mutate(coefname = case_when(
+    name=="b_Intercept" ~ "Intercept",
+    name=="b_scaleannual_tmp"~ "annual mean temperature",
+    name=="b_scalelogarea_LAND_km210"~ "size of urban area",
+    name=="b_scalemean_pTREE" ~ "tree cover",
+    name=="b_scalemean_human_modification_50km" ~ "mean Human Modification index",
+    name=="b_scalemean_yday_prop"~ "mean sampling date"
+  ))  |> 
+  mutate(nonzero = sign(.lower)==sign(.upper)) |> 
+  mutate(print_coef = paste0(
+     sprintf("%.2f",round(value,2)), 
+    " \\[", 
+    sprintf("%.2f",round(.lower,2)),
+    ", ", 
+    sprintf("%.2f", round(.upper,2)),
+    "\\]")
+    ) |> 
+  mutate(print_coef=case_when(nonzero~paste0("**",print_coef,"**"),TRUE~print_coef))  |> 
+  mutate(coefname=fct_relevel(coefname,
+    "Intercept","annual mean temperature","size of urban area","tree cover",
+    "mean Human Modification index","mean sampling date"
+  ))|> 
+  arrange(coefname) |>
+  select(response,coefficient=coefname,print_coef) |> 
+  pivot_wider(names_from = response,values_from = print_coef)
+
+
+suppltable
+knitr::kable(suppltable)
+```
+
+## Suppl plot
+
+```{r}
+pp=plot(conditional_effects(metareg_all_size,effects = "mean_yday_prop"))
+
+suppl_size_date <- pp$mean_yday_prop + 
+  scale_x_continuous("mean sampling date (proportion of year elapsed)")+
+  scale_y_continuous("Predicted mean effect size after controlling for other moderators") +
+  geom_hline(yintercept=0,lty=2)+
+  theme_bw()
+```
+
+```{r, dev='cairo_pdf'}
+ggsave(here("plots","SUPPL_size_date.pdf"), plot = suppl_size_date, width = 5, height = 5)
+ggsave(here("plots","SUPPL_size_date.png"), plot = suppl_size_date, width = 5, height = 5)
+```

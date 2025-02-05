@@ -1,0 +1,93 @@
+var bBox = ee.Geometry.BBox(-1.87,47.99,-1.46,48.25);
+
+// Project the image to Mollweide.
+var wkt = ' \
+  PROJCS["World_Mollweide",\
+    GEOGCS["WGS 84",\
+        DATUM["WGS_1984",\
+            SPHEROID["WGS 84",6378137,298.257223563,\
+                AUTHORITY["EPSG","7030"]],\
+            AUTHORITY["EPSG","6326"]],\
+        PRIMEM["Greenwich",0],\
+        UNIT["Degree",0.0174532925199433]],\
+    PROJECTION["Mollweide"],\
+    PARAMETER["central_meridian",0],\
+    PARAMETER["false_easting",0],\
+    PARAMETER["false_northing",0],\
+    UNIT["metre",1,\
+        AUTHORITY["EPSG","9001"]],\
+    AXIS["Easting",EAST],\
+    AXIS["Northing",NORTH],\
+    AUTHORITY["ESRI","54009"]]';
+
+var proj_mollweide = ee.Projection(wkt);
+
+var canopyHeight = ee.ImageCollection("projects/meta-forest-monitoring-okw37/assets/CanopyHeight").mosaic();
+var treenotree = canopyHeight.gte(1)
+.setDefaultProjection(proj_mollweide, null, 1)
+
+// Extract the projection before doing any computation
+var projection = treenotree.projection()
+
+var treenative = treenotree.setDefaultProjection(projection)
+
+Map.addLayer(treenotree, {
+    min: 0,
+    max: 1,
+    palette: ['440154', 'fde725']
+}, 'Canopy height (>=1 meter)', false);
+
+
+Map.addLayer(bBox);
+
+
+// Get the projection at required scale
+var projectionAt10 = projection.atScale(10)
+var projectionAt100 = projection.atScale(100)
+var projectionAt1000 = projection.atScale(1000)
+
+var treeAt10 = treenative
+  // Request the data at the scale and projection
+  // of reduced resolution
+  .reproject({
+    crs: projectionAt10
+  })
+  .reduceResolution({
+    reducer: ee.Reducer.mean(),
+    maxPixels: 1024
+  })
+
+var treeAt100 = treeAt10
+  // Request the data at the scale and projection
+  // of reduced resolution
+  .reproject({
+    crs: projectionAt100
+  })
+  .reduceResolution({
+    reducer: ee.Reducer.mean(),
+    maxPixels: 1024
+  })
+
+var treeAt1000 = treeAt100
+  // Request the data at the scale and projection
+  // of reduced resolution
+  .reproject({
+    crs: projectionAt1000
+  })
+  .reduceResolution({
+    reducer: ee.Reducer.mean(),
+    maxPixels: 1024
+  })
+  
+
+Map.addLayer(treeAt10)
+
+Export.image.toDrive({
+  image: treeAt100,
+  crs: wkt,
+  description: 'treecover_100m_Rennes',
+  folder: 'tree_cover',
+  scale: 100,
+  region: bBox
+});
+

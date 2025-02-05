@@ -1,0 +1,83 @@
+---
+title: "Getting average GHSL built-up and land areas for each urban area of interest"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-packages}
+library(tidyverse)
+library(sf)
+library(units)
+library(stars)
+library(here)
+```
+
+We could run this using the 10m resolution tiles (see `R/02_get_GHSL_buffers_highres.qmd`), but since the urban areas polygons are drawn at 1km resolution and there are GHSL `tif` files at 1 km resolution, we use these coarser versions to make calculations faster (we checked on a subset of urban areas, and results would be the same)
+
+The `data/GHSL_1000m` folder and sub-folders is where to put `tif` files downloaded from the GHSL website (see `data/GHSL_1000m/README.md` for more details). This code only runs if these files are there. If you are checking this directly from the archived repository (which does not contain a copy of these files as they are heavy), you can skip this code and go directly to the script files that use its `csv` output, a copy of which **is** archived in this repo.
+
+From here things are pretty straightforward, from loading the rasters as `stars` objects...
+
+```{r stars-rasters}
+stars_BUILT2020 <- read_stars(
+    here("data","GHSL_1000m","BUILT-S","GHS_BUILT_S_E2020_GLOBE_R2023A_54009_1000_V1_0.tif"),
+    proxy = TRUE
+  )
+
+stars_LAND <- read_stars(
+    here("data","GHSL_1000m", "LAND","GHS_LAND_E2018_GLOBE_R2022A_54009_1000_V1_0.tif"),
+    proxy = TRUE
+  )
+```
+
+... to loading the urban area polygons...
+
+```{r load-urban-polygons}
+polygons <- read_sf( here("data","GHSL_1000m","GHSL_SMOD_UC_DUC_2020_polygons_V2_0_R2023A.gpkg"))
+```
+
+...summing built-up and land over the polygons...
+
+```{r compute-sums-over-polygons}
+sum_BUILT2020 <- aggregate(x=stars_BUILT2020,by=polygons,FUN=sum,na.rm=TRUE) |> 
+  st_as_sf()|> 
+  as_tibble() |> 
+  select(-geometry) |> 
+  rename_at(1,~"sum_BUILT2020")
+
+sum_LAND <- aggregate(x=stars_LAND,by=polygons,FUN=sum,na.rm=TRUE) |> 
+  st_as_sf()|> 
+  as_tibble() |> 
+  select(-geometry) |> 
+  rename_at(1,~"sum_LAND")
+```
+
+... and finally using these to calculate % of built-up and land:
+
+```{r summarise-results}
+urban_summary <- cbind(sum_BUILT2020,sum_LAND) |> 
+  mutate(urban_area=polygons$urban_area, .before = 1) |> 
+  mutate(AREA=as.numeric(st_area(polygons))) |> 
+  mutate(area_km2_classic = AREA/ (1000*1000)) |> 
+  mutate(
+    mean_pBUILT_classic = sum_BUILT2020/AREA,
+    mean_pBUILT = sum_BUILT2020/sum_LAND,
+    mean_pLAND = sum_LAND/AREA
+  ) |> 
+  mutate(area_LAND_km2 = mean_pLAND * area_km2_classic) |> 
+  select(urban_area,
+         area_km2_classic,
+         area_LAND_km2,
+         mean_pLAND,
+         mean_pBUILT,
+         mean_pBUILT_classic
+         )
+
+urban_summary
+```
+
+
+```{r write-csv}
+write_csv(urban_summary, here("data","GHSL_urban_summary.csv"))
+```

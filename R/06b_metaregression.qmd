@@ -1,0 +1,320 @@
+---
+title: "metaanalysis"
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-packages}
+library(brms)
+library(metafor)
+library(tidyverse)
+library(here)
+library(patchwork)
+library(tidybayes)
+library(ggtext)
+
+options(mc.cores = 4)
+```
+
+We start by loading the final data table we made in previous script
+
+```{r load-data}
+data_allscales <- read_csv(here("data","final_dataset_meta_analyses.csv"))
+```
+
+
+```{r filter-data}
+data <- data_allscales |> 
+  group_by(response_name,urban_area,year, team) |> 
+  filter(AICc_baseline==min(AICc_baseline))|> 
+  mutate(yi = case_when(is.autocor.spatial~yi_spatial,TRUE~yi_baseline),
+         vi = case_when(is.autocor.spatial~vi_spatial,TRUE~vi_baseline)
+         )
+```
+
+see eg https://doi.org/10.1890/14-0362.1 for an example where they ypicked the largest ES across scales
+"When studies measured effects of wetland amount and forest amount at multiple spatial scales, we calculated an effect size for each variable at each scale. We then selected the largest estimate across scales (...)"
+
+```{r filter-data-alt}
+## an alt_approach to choosing ES, we first select for each scale whether the spatial or non spatial model should be retained
+## then we pick the model with the strongest ES
+## Can't use AIC on a mix of spatial and non-spatial models since AIC in spaMM seem to behave a bit differently (see their doc)
+data2<-data_allscales |> 
+  group_by(response_name,urban_area,year, team) |> 
+  mutate(yi = case_when(is.autocor.spatial~yi_spatial,TRUE~yi_baseline),
+         vi = case_when(is.autocor.spatial~vi_spatial,TRUE~vi_baseline)
+         ) |> 
+  filter(abs(yi)==max(abs(yi))) 
+```
+
+```{r}
+plot(data$yi,data2$yi)
+#the two methods give about the same results in most cases
+```
+
+# Bayesian metaanalysis
+
+
+
+```{r prep-plot-annotations}
+annotations <- tibble(
+  response_name = c(
+  "log_abdomen","spider_length","radius","mesh_size","brightness"
+  ),
+  full_names = c("relative abdomen area","spider length",
+                      "web radius","mesh width",
+               "abdomen brightness")
+  )
+```
+
+## models with moderators
+
+```{r}
+prep_uni <- tibble(moderator = c("annual_tmp","log(area_LAND_km2,10)",
+                     "mean_pTREE","mean_human_modification_50km","mean_yday_prop")
+       ) |> 
+mutate(formula=paste0("yi|se(sqrt(vi))~ scale(",moderator,") + (1|urban_area/study)")) |> 
+  expand_grid(data) |> 
+  left_join(annotations) |> 
+  group_by(moderator,formula,response_name, full_names) |> 
+  nest()
+```
+
+
+```{r}
+metaregs_uni <- prep_uni|>
+  mutate(model=map2(
+    .x = formula, .y=data,
+    .f = function(formula=.x,data=.y){
+      mod=brm(
+        formula(formula),
+        data=data,
+        seed=42,
+    prior=c(
+        set_prior("normal(0,0.5)",class="Intercept"),
+        set_prior("normal(0,0.5)",class="b"),
+        set_prior("normal(0,0.5)",class="sd")
+    ),
+    control=list(adapt_delta=0.99),
+    iter=2000,warmup=1000
+      )
+      return(mod)
+    }
+  )) 
+```
+
+
+```{r}
+table2 <- metaregs_uni |> 
+  mutate(coef_summary = map(.x=model,
+                            .f=~.x |> 
+                              as_draws_df() |> 
+                              as_tibble() |> 
+                              select(beta=starts_with("b_scale")) |> 
+                              mean_qi()
+  )
+  ) |> 
+  ungroup() |> 
+  unnest(coef_summary) |> 
+  select(moderator,full_names,beta,.lower,.upper)|> 
+  mutate(nonzero = sign(.lower)==sign(.upper)) |> 
+  mutate(print_coef = paste0(
+     sprintf("%.2f",round(beta,2)), 
+    " \\[", 
+    sprintf("%.2f",round(.lower,2)),
+    ", ", 
+    sprintf("%.2f", round(.upper,2)),
+    "\\]")
+    ) |> 
+  mutate(print_coef=case_when(nonzero~paste0("**",print_coef,"**"),TRUE~print_coef)) |> 
+  select(moderator,trait = full_names,print_coef) |> 
+  mutate(moderator = case_when(
+    moderator=="annual_tmp"~ "annual mean temperature",
+    moderator=="log(area_LAND_km2,10)"~ "size of urban area",
+    moderator=="mean_pTREE" ~ "tree cover",
+    moderator=="mean_human_modification_50km" ~ "mean Human Modification index",
+    moderator=="mean_yday_prop"~ "mean sampling date"
+  )) |> 
+  pivot_wider(names_from = trait,values_from = print_coef)
+
+
+knitr::kable(table2)
+```
+
+
+```{r}
+metaregs_uni$model[[1]] # checking models ESS and Rhats 
+```
+
+
+### Plots
+
+```{r}
+main_colour <- "#998ec3"
+pale_colour <- "#d8daeb"
+```
+
+#### the temperature-radius plot
+
+```{r}
+mod_radius_tmp <- (metaregs_uni |> filter(response_name=="radius" & moderator=="annual_tmp"))$model[[1]]
+mod_abdomen_date <- (metaregs_uni |> filter(response_name=="log_abdomen" & moderator=="mean_yday_prop"))$model[[1]]
+```
+
+
+```{r}
+arrows_annotate <- tibble(y = c(-0.5, 0.5), 
+                          label = c("smaller in cities", "larger in cities")
+                          ) |>
+  ggplot() +
+  geom_segment(aes(y = y * 0.25, yend = y * 0.8, x = 0, xend = 0),
+    arrow = arrow(type = "closed", angle = 15, length = unit(0.5, "cm"))
+  ) +
+  geom_text(aes(y = 0.9 * y, x = 0, label = label, vjust = c(1, 0))) +
+  coord_cartesian(ylim = c(-0.85, 0.85)) +
+  theme_void()
+```
+
+
+```{r}
+make_main_plot <- function(model,data,resp){
+  
+  tt <- data |>
+  filter(response_name==resp)
+  
+effect_size_fit <- tt |>
+  add_epred_draws(model, re_formula = ~ (1 | urban_area / study))
+
+if(resp == "radius"){
+overall_fit <- tibble(
+  annual_tmp = 4:16,
+  vi = 0, ## aux vars needed as placeholder for epred internals, not used here and doesn't affect result
+  ) |> 
+  add_epred_draws(model, re_formula = NA)
+
+PE_fit <- tibble(
+  annual_tmp = 4:16,
+  urban_area ="x",study="y",
+  vi = 0,
+  ) |> 
+  add_epred_draws(model, re_formula = ~ (1 | urban_area / study),allow_new_levels=TRUE)
+
+  xlabel <- "mean annual temperature (°C)"
+  ylabel <- "effect size (Zr, radius)"
+  
+  p_main <- ggplot() +
+  stat_lineribbon(data = PE_fit, aes(x = annual_tmp, y = .epred), .width = 0.95, fill = pale_colour) +
+  stat_lineribbon(data = overall_fit, aes(x = annual_tmp, y = .epred), .width = 0.95, fill = main_colour) +
+  stat_pointinterval(
+    data = effect_size_fit,
+    aes(x = annual_tmp, y = .epred), .width = c(0, 0.95), alpha = 0.4
+  ) +
+  geom_point(
+    data = tt,
+    aes(x = annual_tmp, yi, size = 1 / vi),
+    pch = 21, fill = "white", alpha = 0.5
+  ) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  scale_y_continuous(ylabel) +
+  scale_x_continuous(xlabel) +
+  theme_bw() +
+  coord_cartesian(ylim = c(-1, 1)) +
+  theme(legend.position = "none") 
+
+}
+ 
+if(resp == "log_abdomen"){
+overall_fit <- tibble(
+  mean_yday_prop = (64:81)/100,
+  vi = 0, ## aux vars needed as placeholder for epred internals, not used here and doesn't affect result
+  ) |> 
+  add_epred_draws(model, re_formula = NA)
+
+PE_fit <- tibble(
+  mean_yday_prop = (64:81)/100,
+  urban_area ="x",study="y",
+  vi = 0,
+  ) |> 
+  add_epred_draws(model, re_formula = ~ (1 | urban_area / study),allow_new_levels=TRUE)
+
+
+  xlabel <- "mean sampling date (proportion of year elapsed)"
+  ylabel <- "effect size (Zr, relative abdomen area)"
+  
+  p_main <- ggplot() +
+  stat_lineribbon(data = PE_fit, aes(x = mean_yday_prop, y = .epred), .width = 0.95, fill = pale_colour) +
+  stat_lineribbon(data = overall_fit, aes(x = mean_yday_prop, y = .epred), .width = 0.95, fill = main_colour) +
+  stat_pointinterval(
+    data = effect_size_fit,
+    aes(x = mean_yday_prop, y = .epred), .width = c(0, 0.95), alpha = 0.4
+  ) +
+  geom_point(
+    data = tt,
+    aes(x = mean_yday_prop, yi, size = 1 / vi),
+    pch = 21, fill = "white", alpha = 0.5
+  ) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  scale_y_continuous(ylabel) +
+  scale_x_continuous(xlabel) +
+  theme_bw() +
+  coord_cartesian(ylim = c(-1.1, 1.1)) +
+  theme(legend.position = "none") 
+}
+
+return(p_main)
+
+
+}
+```
+
+
+```{r}
+p_main_radius <- make_main_plot(mod_radius_tmp,data,resp="radius")
+p_main_abdomen <- make_main_plot(mod_abdomen_date,data,resp="log_abdomen")
+
+
+fig4 <- (arrows_annotate | p_main_radius) + plot_layout(widths = c(0.2, 0.8))
+
+fig5 <- (arrows_annotate | p_main_abdomen) + plot_layout(widths = c(0.2, 0.8))
+```
+
+```{r, dev='cairo_pdf'}
+ggsave(here("plots","fig4.pdf"), plot = fig4, width = 7, height = 5)
+ggsave(here("plots","fig4.png"), plot = fig4, width = 7, height = 5)
+
+ggsave(here("plots","fig5.pdf"), plot = fig5, width = 7, height = 5)
+ggsave(here("plots","fig5.png"), plot = fig5, width = 7, height = 5)
+```
+# aside: an example of classical metaanalysis
+
+```{r}
+library(clubSandwich)
+```
+
+
+```{r}
+mod_freq <- rma.mv(
+  yi = yi, V = vi,
+  random = list(~ 1 | urban_area),
+  slab = paste(urban_area, year, urban_scale),
+  data = filter(data, response_name == "log_abdomen"),
+  mods = ~ scale(annual_tmp) + scale(log(area_LAND_km2,10)) + 
+    scale(mean_pTREE) + scale(mean_human_modification_50km)+
+    scale(mean_yday_prop),
+  dfs = "contain" # see help
+)
+
+robust(mod_freq, cluster = urban_area, clubSandwich = TRUE)
+coef_test(mod_freq,vcov="CR2")
+```
+
+
+```{r misc}
+summary(mod_freq)
+anova(mod_freq, btt = 2)
+anova(mod_freq, btt = 3)
+
+forest(mod_freq)
+funnel(mod_freq)
+```
