@@ -4,8 +4,9 @@
 
  To re-run `R/03_get_GHSL_urban_areas_info.qmd`, large files from the GHSL (<https://human-settlement.emergency.copernicus.eu/download.php>, version R2023A), must be re-downloaded and included in this folder; see list below (check <https://human-settlement.emergency.copernicus.eu/legacyData.php> to find R2023A if it becomes superseded by newer versions).
 
-in `BUILT-S` subfolder: `GHS_BUILT_S_E2020_GLOBE_R2023A_54009_1000_V1_0.tif`
-in `LAND` subfolder: `GHS_LAND_E2018_GLOBE_R2022A_54009_1000_V1_0.tif`
+to be placed in the `BUILT-S` subfolder: `GHS_BUILT_S_E2020_GLOBE_R2023A_54009_1000_V1_0.tif`
+
+to be placed in the `LAND` subfolder: `GHS_LAND_E2018_GLOBE_R2022A_54009_1000_V1_0.tif`
 
 (see the README for the GHSL 10m files for how to parse file names)
 (Here, contrary to the 10m resolution files, there is only one file for the entire Earth, so no specific tiles. Below the map at the above URL, select the Global Download)
