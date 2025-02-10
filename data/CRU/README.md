@@ -12,4 +12,4 @@ To re-run `R/01_get_temperature_CRU.qmd`, large files from the CRU-TS archive (<
 
 - `cru_ts4.08.2021.2023.tmp.dat.nc`
 
-The output file resulting from running `R/01_get_temperature_CRU.qmd`, which contains average annual temperature for each focal urban area, **is** included in `data`, so users can re-run downstream analyses without doing so, though.
+The output file resulting from running `R/01_get_temperature_CRU.qmd`, which contains average annual temperature for each focal urban area, **is** included in `data` (`CRUtmp_1991-2020.csv`), so users can re-run downstream analyses without doing so, though.
