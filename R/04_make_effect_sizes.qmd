@@ -40,7 +40,7 @@ Some info on these data:
   - `LOCATION` is a city/region ID as recorded in the original database. Does not fully match the GHSL urban areas, so `urban_areas` table used to harmonize
   - each record has a `DATE`, `LATITUDE` and `LONGITUDE`
   - the remaining columns are values for phenotypic traits, either extracted from photographs or measured in situ. Note that not all traits were measured for all spiders (including due to imperfect photographs, or because of destroyed web)
-    - `spider_length`: total length, in mm, from tip to tip
+    - `spider_length`: total length (cephalothorax and abdomen), in mm, from tip to tip
     - `abdomen_length`
     - `abdomen_area`: in mm^2
     - `radius` of spider web, in cm
@@ -110,6 +110,7 @@ data |>
   ggplot()+
   geom_point(aes(LONGITUDE,LATITUDE,col=LONGITUDE<(-123.1)))+
   facet_wrap(~year)
+# the two separate gradients are easily distinguishable
 ```
 
 
@@ -159,7 +160,7 @@ and then move the columns containing the built-up at various buffers also from t
 
 We end up with one row = one spider, one trait, one buffer width (so each spider occupies multiple rows in the table).
 
-We create a column grouping together spiders in the same 100 by 100m pixel (this will be used later to determine if the spiders are spread out enough)
+We also create a column (`pixel`) grouping together spiders in the same 100 by 100m pixel (this will be used later to determine if the spiders are spread out enough)
 ```{r step2}
 step2 <- step1 |>
   pivot_longer(
@@ -185,10 +186,10 @@ step2 <- step1 |>
   mutate(pixel = paste(floor(xcoord / 100), floor(ycoord / 100)))
 ```
 
-We nest our dataset so that now one row = one potential effect size; data from individual spiders are nested in the newly created list-column
+We now nest our dataset so that now one row = one potential effect size; data from individual spiders are nested in the newly created list-column
 
-We create a column that contains the basic formula that will be used in a linear model to obtain our effect size. It varies depending on whether the response is log(abdomen) (to get "body condition") or any other trait.
-For log(abdomen), since the model also includes log(size) as covariate, there is an additional NA removal step to ensure we keep only observations with both variables
+We create a column that contains the basic formula that will be used in a linear model to obtain our effect size. It varies depending on whether the response is log(abdomen) (where we control for log(length) to get "body condition") or any other trait.
+For log(abdomen), since the model also includes log(length) as covariate, there is an additional NA removal step to ensure we keep only observations with both variables
 
 ```{r step3}
 step3 <- step2 |>
@@ -291,9 +292,11 @@ summarize_N_by_traits(step4) # before the filtering by minimal sample size and m
 summarize_N_by_traits(step6) # after
 ```
 
-
+We can now move to the actual model fitting and effect size calculations
 
 # Make effect sizes
+
+we don't worry now about whether to choose between  models with or without spatial correlation, or which scale of buffer for urbanization: we fit all possible combinations and record summary parameters for all, to be sorted later. This admittedly takes a long time, but (a) is easier to code (b) allows us or others to later walk back decisions on spatial scale and spatial correlation without having to re-run the present qmd file
 
 ```{r step7}
 step7 <- step6  |>
@@ -310,7 +313,7 @@ step7 <- step6  |>
 ```
 (we fit models on standardized datasets so that we avoid some convergence issues for the models with spatial autocorrelation later on, but since we're using correlation as effect sizes based on t-values, this changes nothing and we don't have to worry about back-transformations or anything)
 
-
+After the baseline models in step7, the spatial models:
 ```{r step8}
 step8 <- step7 |> 
   mutate(complete_obs = map(
@@ -335,6 +338,8 @@ step8 <- step7 |>
   mutate(AIC_spatial = map(.x=model_Matern,.f=function(.x){extractAIC(.x)["AIC"]})
          )
 ```
+
+We write a couple of function to automate the extraction of key values from all these models
 
 ```{r function_diagnostics}
 diagnostics <- function(data, model) {
@@ -367,6 +372,23 @@ diagnostics <- function(data, model) {
 ## exactly what we get if we use diagnostics() on the Matern models
 ```
 
+```{r extract-coefs-function}
+extract_coefs <- function(.x) {
+      parms <- model_parameters(.x)
+      output <- tibble(
+        df_error = parms$df_error[which(parms$Parameter == "pBUILT")],
+        coef_urban = parms$Coefficient[which(parms$Parameter == "pBUILT")],
+        se_urban = parms$SE[which(parms$Parameter == "pBUILT")],
+        t_urban = parms$t[which(parms$Parameter == "pBUILT")],
+        p_urban = parms$p[which(parms$Parameter == "pBUILT")]
+      )
+
+      return(output)
+    }
+```
+
+And we then use them:
+
 ```{r step9}
 step9 <- step8 |>
   mutate(diags = map2(
@@ -385,22 +407,6 @@ step9 <- step8 |>
     }
   ) |>
     unlist())
-```
-check non spatial assumptions more finely?? explore plots of those with p >0.05 to check??
-
-```{r extract-coefs-function}
-extract_coefs <- function(.x) {
-      parms <- model_parameters(.x)
-      output <- tibble(
-        df_error = parms$df_error[which(parms$Parameter == "pBUILT")],
-        coef_urban = parms$Coefficient[which(parms$Parameter == "pBUILT")],
-        se_urban = parms$SE[which(parms$Parameter == "pBUILT")],
-        t_urban = parms$t[which(parms$Parameter == "pBUILT")],
-        p_urban = parms$p[which(parms$Parameter == "pBUILT")]
-      )
-
-      return(output)
-    }
 ```
 
 
@@ -446,7 +452,7 @@ step11 <- step10  |>
   ))
 ```
 
-
+And finally, we make our effect size table ready to export
 ```{r step12}
 step12 <- step11 |>
   select(
