@@ -74,7 +74,7 @@ tab <- obs |>
 ```
 
 
-Now that the table is created, we can increment through the various buffer sizes using a loop (this is not optimized or parallelized, and takes up to a few hours on a laptop):
+Now that the table is created, we can increment through the various buffer sizes using a loop (this is not optimized or parallelized **at all**, and takes up to a few hours on a laptop):
 
 ```{r set-buffer-sizes}
 step_width <- 100
