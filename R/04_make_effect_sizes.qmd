@@ -6,18 +6,20 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(DHARMa)
-library(effectsize)
-library(MuMIn)
-library(metafor)
-library(parameters)
-library(performance)
-library(sf)
-library(spaMM)
-library(tidyverse)
+library(DHARMa)      # CRAN v0.4.7
+library(effectsize)  # CRAN v1.0.0
+library(MuMIn)       # CRAN v1.48.4
+library(metafor)     # CRAN v4.8-0
+library(parameters)  # CRAN v0.24.1
+library(performance) # CRAN v0.13.0
+library(sf)          # CRAN v1.0-19
+library(spaMM)       # CRAN v4.5.0
+library(tidyverse)   # CRAN v2.0.0
 
-library(here)
+library(here)        # CRAN v1.0.1
 ```
+
+# Loading data
 
 We start by loading the raw files as well as the built-up % calculated in `02_get_GHSL_buffers_highres.qmd`:
 
@@ -31,7 +33,30 @@ builtup <- read_csv(here("data", "GHSL_10m_BUILT_spiders.csv"))
 polygons <- read_sf(here("data","GHSL_1000m","GHSL_SMOD_UC_DUC_2020_polygons_V2_0_R2023A.gpkg"))
 ```
 
-[NEED TO ADD SUMMARY INFO HERE]
+Some info on these data:
+
+- `raw_records` is the data table containing the information collected on individual spiders
+  - each spider = one row = one individual `ID`
+  - `LOCATION` is a city/region ID as recorded in the original database. Does not fully match the GHSL urban areas, so `urban_areas` table used to harmonize
+  - each record has a `DATE`, `LATITUDE` and `LONGITUDE`
+  - the remaining columns are values for phenotypic traits, either extracted from photographs or measured in situ. Note that not all traits were measured for all spiders (including due to imperfect photographs, or because of destroyed web)
+    - `spider_length`: total length, in mm, from tip to tip
+    - `abdomen_length`
+    - `abdomen_area`: in mm^2
+    - `radius` of spider web, in cm
+    - `mesh_size` of spider web, in cm
+    - `abdomen_brightness_cor`, `leafdark_cor`, `leaflight_cor`: reflectance measurements averaged over the whole abdomen, the dark part of the "leaf", the light part of the "leaf", respectively. Measurements are standardized using grey standards on each photograph (see manuscript for details). The grey standard not being placed in the same light conditions as the spider led to many photographs being rejected for these measurements, hence the larger % of NA than the other traits
+
+
+- In `urban_areas`, `LOCATION` is as in ``raw_records`, `urban_area` is the corresponding GHSL UC or DUC, `country` is the country.
+
+- `geoflagged` contains the `ID`s of individual spiders that were flagged as potentially problematic during GIS exploration re: geographic coordinates. Spiders with `GEOFLAG_lvl` == 2, i.e. observation that were too far outside their focal city, or with wrongly recorded coordinates (mismatch between coordinates and recorded `LOCATION`), were removed from consideration in the analyses.
+
+- `builtup` contains built-up information in buffers around each spiders, see `02_get_GHSL_buffers_highres.qmd`
+
+- `polygons` contains the outlines of the urban area polygons (`geom`) and their names (`urban_area`). `type` indicates whether they are an Urban Centre (UC, large cities) or a Dense Urban Cluster (DUC, smaller cities) _sensu_ GHSL.
+
+# Some general filtering and preparation
 
 We then need to filter out the data points that we geoflagged (too far from the city they are supposed to be matched too, in another urban area altogether, and one with invalid coordinates _ European coordinates for an American city).
 
@@ -47,7 +72,7 @@ records_filtered <- records_filtered_space |>
   filter(month(DATE) %in% c(7:11))
 ```
 
-We then create columns with the coordinates of the individual records from degrees to m, for use in spatial autocorrelation diagnostics later on. At the same time, we also make a column about whether the record was made inside the focal urban area sensu GHSL, or outside (while you can have valid urbanization gradients using only records made inside a UC/DUC, especially given these are defined quite coarsely, this is still a useful information to have)
+We then create columns with the coordinates of the individual records from degrees to m, for use in spatial autocorrelation diagnostics later on.
 
 ```{r get-coords-mollweide}
 coords_m <- st_as_sf(records_filtered, coords = c("LONGITUDE", "LATITUDE"), crs = "wgs84") |>
@@ -56,8 +81,7 @@ coords_m <- st_as_sf(records_filtered, coords = c("LONGITUDE", "LATITUDE"), crs 
 records_filtered_mollweide <- records_filtered |>
   mutate(
     xcoord = st_coordinates(coords_m)[, 1],
-    ycoord = st_coordinates(coords_m)[, 2],
-    is_in_UC_DUC = ID %in% st_intersection(x=coords_m,y=polygons)$ID # some warning is expected
+    ycoord = st_coordinates(coords_m)[, 2]
   )
 ```
 
@@ -121,7 +145,6 @@ step1 <- data |>
   select(urban_area, team, year,yday,yday_prop,
     ID,
     xcoord, ycoord,
-    is_in_UC_DUC,
     matches("pBUILT_[[:digit:]]+"),
     spider_length,
     mesh_size,radius,
@@ -224,10 +247,7 @@ step6 <- step5 |>
   }),
     mean_yday_prop = map(.x=complete_obs,.f=function(.x){
     mean(.x$yday_prop)
-  }),
-    p_in_UC_DUC = map(.x = complete_obs, .f = function(.x) {
-      mean(as.numeric(.x$is_in_UC_DUC))
-    })
+  })
   )
 ```
 
@@ -433,14 +453,14 @@ step12 <- step11 |>
     urban_area, year,team,
     response_name, 
     urban_scale=scale, 
-    p_in_UC_DUC,mean_yday,mean_yday_prop,
+    mean_yday,mean_yday_prop,
     ES_baseline,ES_spatial, 
     AIC_baseline,AICc_baseline,AIC_spatial,
     is.autocor.spatial,
     N_complete_obs
   )|>
   unnest(c(ES_baseline,ES_spatial, 
-    AIC_baseline,AICc_baseline,AIC_spatial,p_in_UC_DUC,mean_yday, mean_yday_prop)) |>
+    AIC_baseline,AICc_baseline,AIC_spatial,mean_yday, mean_yday_prop)) |>
   ungroup() |> 
   mutate(EStype=ES_type)
 ## needs to double check that yes correct ni is df for t to zr
