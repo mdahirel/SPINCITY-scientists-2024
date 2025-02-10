@@ -36,7 +36,9 @@ coords <- read_sf(here("data", "GHSL_1000m", "GHSL_SMOD_UC_DUC_2020_polygons_V2_
   st_transform(crs = "wgs84")
 ```
 
-For each month and year, we extract the values at the urban centroid and arrange that in a neat table:
+For each month and year, we extract the values at the urban centroid* and arrange that in a neat table:
+
+(*taking the centroid is fine, and make calculations faster, given the coarse size of CRU-TS grid cells)
 
 ```{r cru-tbl}
 cru_tbl <- st_extract(cru, at = coords) |>
