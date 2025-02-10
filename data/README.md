@@ -2,7 +2,7 @@
 
 This folder contains the various data files used in analyses.
 
-- The `CRU`, `GHSL_10m` and `GHSL_1000m` are meant to contain large raw raster files downloaded from external archives, from which we extracted relevant data. Due to their size, these raw files are **not** archived, only the outputs used in further analyses; see the `README` files in each subfolder for details.
+- The `CRU`, `GHSL_10m` and `GHSL_1000m` subfolders are meant to contain large raw raster files downloaded from external archives, from which we extracted relevant data. Due to their size, these raw files are **not** archived, only the outputs used in further analyses; see the `README` files in each subfolder for details.
 
 - `CRUtmp_1991-2020.csv` is the result of processing the data in the `CRU` subfolder for further analyses (`01_get_temperature_CRU.qmd`). It contains average annual temperatures for each focal urban area
 
