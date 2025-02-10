@@ -6,13 +6,13 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(brms)
-library(metafor)
-library(tidyverse)
-library(here)
-library(patchwork)
-library(tidybayes)
-library(ggtext)
+library(brms) # CRAN v2.22.0
+library(metafor) # CRAN v4.8-0
+library(tidyverse) # CRAN v2.0.0
+library(here) # CRAN v1.0.1
+library(patchwork) # CRAN v1.3.0
+library(tidybayes) # CRAN v3.0.7
+library(ggtext) # CRAN v0.1.2
 
 options(mc.cores = 4)
 ```
@@ -20,17 +20,18 @@ options(mc.cores = 4)
 We start by loading the final data table we made in previous script
 
 ```{r load-data}
-data_allscales <- read_csv(here("data","final_dataset_meta_analyses.csv"))
+data_allscales <- read_csv(here("data", "final_dataset_meta_analyses.csv"))
 ```
 
 
 ```{r filter-data}
-data <- data_allscales |> 
-  group_by(response_name,urban_area,year, team) |> 
-  filter(AICc_baseline==min(AICc_baseline))|> 
-  mutate(yi = case_when(is.autocor.spatial~yi_spatial,TRUE~yi_baseline),
-         vi = case_when(is.autocor.spatial~vi_spatial,TRUE~vi_baseline)
-         )
+data <- data_allscales |>
+  group_by(response_name, urban_area, year, team) |>
+  filter(AICc_baseline == min(AICc_baseline)) |>
+  mutate(
+    yi = case_when(is.autocor.spatial ~ yi_spatial, TRUE ~ yi_baseline),
+    vi = case_when(is.autocor.spatial ~ vi_spatial, TRUE ~ vi_baseline)
+  )
 ```
 
 see eg https://doi.org/10.1890/14-0362.1 for an example where they ypicked the largest ES across scales
@@ -40,39 +41,21 @@ see eg https://doi.org/10.1890/14-0362.1 for an example where they ypicked the l
 ## an alt_approach to choosing ES, we first select for each scale whether the spatial or non spatial model should be retained
 ## then we pick the model with the strongest ES
 ## Can't use AIC on a mix of spatial and non-spatial models since AIC in spaMM seem to behave a bit differently (see their doc)
-data2<-data_allscales |> 
-  group_by(response_name,urban_area,year, team) |> 
-  mutate(yi = case_when(is.autocor.spatial~yi_spatial,TRUE~yi_baseline),
-         vi = case_when(is.autocor.spatial~vi_spatial,TRUE~vi_baseline)
-         ) |> 
-  filter(abs(yi)==max(abs(yi))) 
+data2 <- data_allscales |>
+  group_by(response_name, urban_area, year, team) |>
+  mutate(
+    yi = case_when(is.autocor.spatial ~ yi_spatial, TRUE ~ yi_baseline),
+    vi = case_when(is.autocor.spatial ~ vi_spatial, TRUE ~ vi_baseline)
+  ) |>
+  filter(abs(yi) == max(abs(yi)))
 ```
 
-```{r}
-plot(data$yi,data2$yi)
-#the two methods give about the same results in most cases
+```{r compare-ES-filters}
+plot(data$yi, data2$yi)
+# the two methods give about the same results in most cases
 ```
 
-
-
-```{r}
-ggplot(data2) +
-  geom_pointrange(
-    aes(
-      annual_tmp,
-      y = yi,
-      ymin = yi - sqrt(vi),
-      ymax = yi + sqrt(vi),
-      col = urban_scale
-    )
-  ) +
-  scale_y_continuous("Effect size (Zr)") +
-  scale_x_continuous("Annual mean temperature (°C)") + 
-  geom_hline(yintercept = 0, linetype = 2) +
-  facet_wrap(~ response_name, scales = "free")
-```
-
-```{r}
+```{r plot-retained-scales}
 ggplot(data) +
   geom_boxplot(
     aes(
@@ -83,11 +66,12 @@ ggplot(data) +
   geom_point(
     aes(
       response_name,
-      y = urban_scale),
-      col="darkgrey",position = position_jitter(height=0)
+      y = urban_scale
+    ),
+    col = "darkgrey", position = position_jitter(height = 0)
   ) +
-  scale_x_discrete("Outcome")+
-  scale_y_continuous("Retained scale of effect (buffer radius, m)")+
+  scale_x_discrete("Outcome") +
+  scale_y_continuous("Retained scale of effect (buffer radius, m)") +
   theme_bw()
 ```
 
@@ -100,84 +84,96 @@ https://doi.org/10.1002/jrsm.1475
 
 ### Justifying the choice of prior scales
 
-Based on Senior et al 2016 (REF), we'd expect typical heterogeneity % to be in the high range for ecological data (the paper mention an average around 90% in the range of meta-analyses they checked). We can do a bit of prior predictive check, using the sampling variances for each effect size:
+Based on Senior et al 2016 (https://doi.org/10.1002/ecy.1591), we'd expect typical heterogeneity % to be in the high range for ecological data (the paper mention an average around 90% in the range of meta-analyses they checked). We can do a bit of prior predictive check, using the sampling variances for each effect size:
 
-```{r}
-vres_tab <- data |> 
-  filter(!is.na(yi)) |> 
-  group_by(response_name) |> 
-  summarise(k=length(yi),sum_wi=sum(1/vi),sum_wi_squared=sum((1/(vi))^2)) |> 
-  mutate(var_res=(k-1)*sum_wi/(sum_wi^2-sum_wi_squared))
-
+```{r within-study-variances}
+vres_tab <- data |>
+  filter(!is.na(yi)) |>
+  group_by(response_name) |>
+  summarise(k = length(yi), sum_wi = sum(1 / vi), sum_wi_squared = sum((1 / (vi))^2)) |>
+  mutate(var_res = (k - 1) * sum_wi / (sum_wi^2 - sum_wi_squared))
+# see https://www.metafor-project.org/doku.php/faq#how_are_i_2_and_h_2_computed_i
+# or eq 6 in https://doi.org/10.1186/s13750-023-00301-6 among many others
 vres_tab
 ```
 
-Note that because we have multilevel models, we need to account for that when doing prior checks to chose the SDs
-```{r}
-set.seed(42)
-priorSD = 0.4
+This gets us the "typical" sampling variance
 
-test <- vres_tab |> 
+
+Assuming the SDs of the between study random effects have a half-Normal prior, we can check different values of the SD of that prior `priorSD`, and see what it implies for heterogeneity when combined with the sampling variance
+(Note that because we have multilevel models, we need to account for that when doing prior checks to chose the SD, hence the two "lvl"s of variation sampled below)
+
+```{r prior-check-1}
+set.seed(42)
+priorSD <- 0.4
+
+test <- vres_tab |>
   expand_grid(
     tibble(
-      var_lvl1 = (abs(rnorm(10000,0,priorSD)))^2,
-      var_lvl2 = (abs(rnorm(10000,0,priorSD)))^2 
-      )
-    ) |> 
-  mutate(priorI2 = (var_lvl1 + var_lvl2)/(var_lvl1 + var_lvl2+var_res))
+      var_lvl1 = (abs(rnorm(10000, 0, priorSD)))^2,
+      var_lvl2 = (abs(rnorm(10000, 0, priorSD)))^2
+    )
+  ) |>
+  mutate(priorI2 = (var_lvl1 + var_lvl2) / (var_lvl1 + var_lvl2 + var_res))
 
-ggplot(test)+
-  stat_halfeye(aes(priorI2,response_name),point_interval = "mean_qi")+
-  geom_vline(xintercept=0.9)
-
-
+ggplot(test) +
+  stat_halfeye(aes(priorI2, response_name), point_interval = "mean_qi") +
+  geom_vline(xintercept = 0.9)
 ```
 
 we can also have a look at the implied prior for the partition between the two RE levels
-```{r}
-ggplot(test)+
-  stat_halfeye(aes(var_lvl1/(var_lvl1+var_lvl2),response_name),point_interval = "mean_qi")
+```{r prior-check-2}
+ggplot(test) +
+  stat_halfeye(aes(var_lvl1 / (var_lvl1 + var_lvl2), response_name), point_interval = "mean_qi")
 ```
 
-a $\mathrm{HalfNormal}(0,0.4)$ on random effects SD would seem to behave well for both. A prior SD slightly smaller or larger (0.3 or 0.5) would likely work too, but in the latter the implied prior around heterogeneity seems overly narrow.
-For the fixed effect priors, we follow the suggestion in Röver et al (REF) that the scale of the expected prior heterogeneity (so total RE variance) is a good indicator.
+a $\mathrm{HalfNormal}(0,0.4)$ on random effects SD would seem to behave well for both. A `priorSD` slightly smaller or larger (0.3 or 0.5) would likely work too, but in the latter the implied prior around heterogeneity seems overly narrow.
+For the fixed effect priors, we follow the idea in Röver et al (https://doi.org/10.1002/jrsm.1475) that there is a link with the expected prior heterogeneity (so the total RE variance).
 
-```{r}
-ggplot(test)+
-  stat_halfeye(aes(sqrt(var_lvl1 + var_lvl2),response_name),point_interval = "mean_qi")
+```{r prior-check-3}
+ggplot(test) +
+  stat_halfeye(aes(sqrt(var_lvl1 + var_lvl2), response_name), point_interval = "mean_qi")
 ```
 
-For `priorSD` = 0.4, this falls around 0.5 
+For `priorSD` = 0.4, this falls around 0.5, but again, slight changes do not change the result much.
+
+We can now move to the models
 
 ### the models
 
 ```{r models-no-moderators}
-fit_meta_int <- function(data,resp, adapt_delta=0.99, iter=2000, warmup=1000){
+fit_meta_int <- function(data, resp, adapt_delta = 0.99, iter = 2000, warmup = 1000) {
   # bayesian meta-analytic models are a bit harder to make converge than usual models, hence,the higher default adapt_delta
   model <- brm(
-    yi|se(sqrt(vi))~(1| urban_area / study),
-    data=data |> filter(response_name==resp),
-    seed=42,
-    prior=c(
-        set_prior("normal(0,0.5)",class="Intercept"),
-        set_prior("normal(0,0.4)",class="sd")
-        # the prior for SD set based on arguments in Röver 2021 on expected heterogenity
-        # of z transformed correlations coefficients (both theoretical and compilation of observed tau)
-        # note we have two levels between which total tau is spread, so we could even be narrower
+    yi | se(sqrt(vi)) ~ (1 | urban_area / study),
+    data = data |> filter(response_name == resp),
+    seed = 42,
+    prior = c(
+      set_prior("normal(0,0.5)", class = "Intercept"),
+      set_prior("normal(0,0.4)", class = "sd")
+      # the prior for SD set based on arguments in Röver 2021 on expected heterogenity
+      # of z transformed correlations coefficients (both theoretical and compilation of observed tau)
+      # note we have two levels between which total tau is spread, so we could even be narrower
     ),
-    control=list(adapt_delta=adapt_delta),
-    iter=iter,warmup=warmup
-)
+    control = list(adapt_delta = adapt_delta),
+    iter = iter, warmup = warmup
+  )
   return(model)
 }
 
-modint_size <- fit_meta_int(data,"spider_length")
-modint_abdomen <- fit_meta_int(data,"log_abdomen")
-modint_brightness <- fit_meta_int(data,"brightness")
-modint_radius <- fit_meta_int(data,"radius")
-modint_mesh <- fit_meta_int(data,"mesh_size")
+modint_size <- fit_meta_int(data, "spider_length")
+modint_abdomen <- fit_meta_int(data, "log_abdomen")
+modint_brightness <- fit_meta_int(data, "brightness")
+modint_radius <- fit_meta_int(data, "radius")
+modint_mesh <- fit_meta_int(data, "mesh_size")
 ```
 
+```{r sumamry-model}
+summary(modint_size)
+## look at Rhat and ESSs
+pp_check(modint_size)
+## do both for all models
+```
 
 
 ### get model quantities
@@ -186,132 +182,147 @@ modint_mesh <- fit_meta_int(data,"mesh_size")
 ```{r prep-plot-annotations}
 plot_annotations <- tibble(
   response_name = c(
-  "log_abdomen","spider_length","radius","mesh_size","brightness"
+    "log_abdomen", "spider_length", "radius", "mesh_size", "brightness"
   ),
-  full_names = c("relative abdomen area","spider length",
-                      "web radius","mesh width",
-               "abdomen brightness"),
-  negative_annotation=c("smaller \n in cities","smaller \n in cities",
-                             "smaller webs \n in cities","tighter meshes\n in cities",
-                        "darker \n in cities"),
-       positive_annotation=c("larger \n in cities","larger \n in cities",
-                             "larger webs \n in cities","looser meshes\n in cities",
-                             "lighter \n in cities")
+  full_names = c(
+    "relative abdomen area", "spider length",
+    "web radius", "mesh width",
+    "abdomen brightness"
+  ),
+  negative_annotation = c(
+    "smaller \n in cities", "smaller \n in cities",
+    "smaller webs \n in cities", "tighter meshes\n in cities",
+    "darker \n in cities"
+  ),
+  positive_annotation = c(
+    "larger \n in cities", "larger \n in cities",
+    "larger webs \n in cities", "looser meshes\n in cities",
+    "lighter \n in cities"
   )
-```
-
-```{r}
-get_ES_fits = function(model,data,response){
-  data |> 
-    ungroup() |> 
-    filter(response_name==response) |> 
-    select(urban_area,year,study,response_name,yi,vi) |> 
-    add_epred_draws(model, re_formula = ~ (1 | urban_area / study)) |> 
-    ungroup() |> 
-    select(urban_area,year,study,.draw,.epred)
-}
-
-get_PI_fits = function(model){
-  tibble(yi=0,vi=0,urban_area="x",year="x",study="x") |> ## all variables are placeholders here
-    add_epred_draws(model,re_formula = ~(1|urban_area/study),allow_new_levels=TRUE) |> 
-    ungroup() |> 
-    select(overall.PI = .epred, .draw,.iteration,.chain)
-  
-}
-
-get_overall_fits = function(model){  # get the overall intercept (so meaningful only for intercept-only models)
-  as_draws_df(model) |> 
-  as_tibble() |> 
-  select(overall.epred = b_Intercept,.draw,.iteration,.chain)
-}
-```
-
-```{r}
-ES_fits <- tibble(ES_fits=list(
-  get_ES_fits(modint_abdomen,data,"log_abdomen"),
-  get_ES_fits(modint_size,data,"spider_length"),
-  get_ES_fits(modint_radius,data,"radius"),
-  get_ES_fits(modint_mesh,data,"mesh_size"),
-  get_ES_fits(modint_brightness,data,"brightness")
-),
-response_name = c(
-  "log_abdomen","spider_length","radius","mesh_size","brightness"
 )
-) |> 
-  left_join(plot_annotations)|> 
+```
+
+```{r get-fits-functions}
+## prediction for the individual effect sizes
+get_ES_fits <- function(model, data, response) {
+  data |>
+    ungroup() |>
+    filter(response_name == response) |>
+    select(urban_area, year, study, response_name, yi, vi) |>
+    add_epred_draws(model, re_formula = ~ (1 | urban_area / study)) |>
+    ungroup() |>
+    select(urban_area, year, study, .draw, .epred)
+}
+
+## posterior for the overall distribution of ES (for prediction interval)
+get_PI_fits <- function(model) {
+  tibble(yi = 0, vi = 0, urban_area = "x", year = "x", study = "x") |> ## all variables are placeholders here
+    add_epred_draws(model, re_formula = ~ (1 | urban_area / study), allow_new_levels = TRUE) |>
+    ungroup() |>
+    select(overall.PI = .epred, .draw, .iteration, .chain)
+}
+
+## overal effect
+
+get_overall_fits <- function(model) { # get the overall intercept (so meaningful only for intercept-only models)
+  as_draws_df(model) |>
+    as_tibble() |>
+    select(overall.epred = b_Intercept, .draw, .iteration, .chain)
+}
+```
+
+```{r get-ES-fits}
+ES_fits <- tibble(
+  ES_fits = list(
+    get_ES_fits(modint_abdomen, data, "log_abdomen"),
+    get_ES_fits(modint_size, data, "spider_length"),
+    get_ES_fits(modint_radius, data, "radius"),
+    get_ES_fits(modint_mesh, data, "mesh_size"),
+    get_ES_fits(modint_brightness, data, "brightness")
+  ),
+  response_name = c(
+    "log_abdomen", "spider_length", "radius", "mesh_size", "brightness"
+  )
+) |>
+  left_join(plot_annotations) |>
   unnest(ES_fits)
 ```
 
 
-```{r}
-PI_fits <- tibble(PI_fits=list(
-  get_PI_fits(modint_abdomen),
-  get_PI_fits(modint_size),
-  get_PI_fits(modint_radius),
-  get_PI_fits(modint_mesh),
-  get_PI_fits(modint_brightness)
-),
-response_name = c(
-  "log_abdomen","spider_length","radius","mesh_size","brightness"
-)
-) |> 
+```{r get-PI-fits}
+PI_fits <- tibble(
+  PI_fits = list(
+    get_PI_fits(modint_abdomen),
+    get_PI_fits(modint_size),
+    get_PI_fits(modint_radius),
+    get_PI_fits(modint_mesh),
+    get_PI_fits(modint_brightness)
+  ),
+  response_name = c(
+    "log_abdomen", "spider_length", "radius", "mesh_size", "brightness"
+  )
+) |>
   unnest(PI_fits)
 ```
 
-```{r}
-overall_fits <- tibble(overall_fits=list(
-  get_overall_fits(modint_abdomen),
-  get_overall_fits(modint_size),
-  get_overall_fits(modint_radius),
-  get_overall_fits(modint_mesh),
-  get_overall_fits(modint_brightness)
-),
-response_name = c(
-  "log_abdomen","spider_length","radius","mesh_size","brightness"
-)
-) |> 
-  unnest(overall_fits) |> 
+```{r get-overall-fits}
+overall_fits <- tibble(
+  overall_fits = list(
+    get_overall_fits(modint_abdomen),
+    get_overall_fits(modint_size),
+    get_overall_fits(modint_radius),
+    get_overall_fits(modint_mesh),
+    get_overall_fits(modint_brightness)
+  ),
+  response_name = c(
+    "log_abdomen", "spider_length", "radius", "mesh_size", "brightness"
+  )
+) |>
+  unnest(overall_fits) |>
   mutate(overall.r = metafor::transf.ztor(overall.epred))
 ```
 
 
-```{r}
-vres_tab <- data |> 
-  filter(!is.na(yi)) |> 
-  group_by(response_name) |> 
-  summarise(k=length(yi),sum_wi=sum(1/vi),sum_wi_squared=sum((1/(vi))^2)) |> 
-  mutate(var_res=(k-1)*sum_wi/(sum_wi^2-sum_wi_squared)) ## formula to double check, see https://www.metafor-project.org/doku.php/tips:i2_multilevel_multivariate?s[]=heterogeneity
+```{r get-var-comps}
+vres_tab <- data |>
+  filter(!is.na(yi)) |>
+  group_by(response_name) |>
+  summarise(k = length(yi), sum_wi = sum(1 / vi), sum_wi_squared = sum((1 / (vi))^2)) |>
+  mutate(var_res = (k - 1) * sum_wi / (sum_wi^2 - sum_wi_squared)) ## formula to double check, see https://www.metafor-project.org/doku.php/tips:i2_multilevel_multivariate?s[]=heterogeneity
 # and Nakagawa et al 2023 paper
 
-get_varcomps = function(model){
-  as_draws_df(model) |> 
-  select(starts_with("sd"),.draw,.iteration,.chain) |> 
-  pivot_longer(cols=-c(.draw,.iteration,.chain)) |> 
-  mutate(var_level=str_split_fixed(name,"__",2)[,1]) |> 
-  mutate(var_level=str_remove(var_level,"sd_")) |> 
-  mutate(var_level=case_when(var_level=="urban_area"~"SD_urban_area",TRUE~"SD_study")) |>
-  select(-name) |> 
-  pivot_wider(names_from = var_level,values_from = value)
+get_varcomps <- function(model) {
+  as_draws_df(model) |>
+    select(starts_with("sd"), .draw, .iteration, .chain) |>
+    pivot_longer(cols = -c(.draw, .iteration, .chain)) |>
+    mutate(var_level = str_split_fixed(name, "__", 2)[, 1]) |>
+    mutate(var_level = str_remove(var_level, "sd_")) |>
+    mutate(var_level = case_when(var_level == "urban_area" ~ "SD_urban_area", TRUE ~ "SD_study")) |>
+    select(-name) |>
+    pivot_wider(names_from = var_level, values_from = value)
 }
 
-varcomps <- tibble(varcomps=list(
-  get_varcomps(modint_abdomen),
-  get_varcomps(modint_size),
-  get_varcomps(modint_mesh),
-  get_varcomps(modint_radius),
-  get_varcomps(modint_brightness)
-),
-response_name = c(
-  "log_abdomen","spider_length","radius","mesh_size","brightness"
-)
-) |> 
-  unnest(varcomps) |> 
+varcomps <- tibble(
+  varcomps = list(
+    get_varcomps(modint_abdomen),
+    get_varcomps(modint_size),
+    get_varcomps(modint_mesh),
+    get_varcomps(modint_radius),
+    get_varcomps(modint_brightness)
+  ),
+  response_name = c(
+    "log_abdomen", "spider_length", "radius", "mesh_size", "brightness"
+  )
+) |>
+  unnest(varcomps) |>
   left_join(vres_tab)
 
-varcomps <- varcomps |> 
-  mutate(var_rand = SD_urban_area^2+SD_study^2) |> 
-  mutate(I2 = var_rand/(var_rand + var_res),
-         p_between = SD_urban_area^2 / var_rand)
+varcomps <- varcomps |>
+  mutate(var_rand = SD_urban_area^2 + SD_study^2) |>
+  mutate(
+    I2 = var_rand / (var_rand + var_res),
+    p_between = SD_urban_area^2 / var_rand
+  )
 ```
 
 ### Table 1
@@ -319,140 +330,149 @@ varcomps <- varcomps |>
 ### Table
 
 
-```{r}
-tab_overall <- left_join(overall_fits,varcomps) |> 
-  group_by(response_name) |> 
-  mean_qi(overall.epred,I2,var_rand,p_between) |> 
-  left_join(plot_annotations)|> 
-  mutate(nonzero = sign(overall.epred.lower)==sign(overall.epred.upper))|> 
-  select(full_names,
-         overall.epred,overall.epred.lower,overall.epred.upper, nonzero,
-         I2,I2.lower,I2.upper,
-         var_rand,var_rand.lower,var_rand.upper,
-         p_between,p_between.lower,p_between.upper
-         )
+```{r table1}
+tab_overall <- left_join(overall_fits, varcomps) |>
+  group_by(response_name) |>
+  mean_qi(overall.epred, I2, var_rand, p_between) |>
+  left_join(plot_annotations) |>
+  mutate(nonzero = sign(overall.epred.lower) == sign(overall.epred.upper)) |>
+  select(
+    full_names,
+    overall.epred, overall.epred.lower, overall.epred.upper, nonzero,
+    I2, I2.lower, I2.upper,
+    var_rand, var_rand.lower, var_rand.upper,
+    p_between, p_between.lower, p_between.upper
+  )
 
 
 
-table1 <- tab_overall |> 
+table1 <- tab_overall |>
   mutate(print_ES = paste0(
-     sprintf("%.2f",round(overall.epred,2)), 
-    " \\[", 
-    sprintf("%.2f",round(overall.epred.lower,2)),
-    ", ", 
-    sprintf("%.2f", round(overall.epred.upper,2)),
-    "\\]")
-    )|> 
+    sprintf("%.2f", round(overall.epred, 2)),
+    " \\[",
+    sprintf("%.2f", round(overall.epred.lower, 2)),
+    ", ",
+    sprintf("%.2f", round(overall.epred.upper, 2)),
+    "\\]"
+  )) |>
   mutate(print_tau2 = paste0(
-     sprintf("%.2f",round(var_rand,2)), 
-    " \\[", 
-    sprintf("%.2f",round(var_rand.lower,2)),
-    ", ", 
-    sprintf("%.2f", round(var_rand.upper,2)),
-    "\\]")
-    ) |>
+    sprintf("%.2f", round(var_rand, 2)),
+    " \\[",
+    sprintf("%.2f", round(var_rand.lower, 2)),
+    ", ",
+    sprintf("%.2f", round(var_rand.upper, 2)),
+    "\\]"
+  )) |>
   mutate(print_I2 = paste0(
-     sprintf("%.2f",round(I2,2)), 
-    " \\[", 
-    sprintf("%.2f",round(I2.lower,2)),
-    ", ", 
-    sprintf("%.2f", round(I2.upper,2)),
-    "\\]")
-    ) |> 
+    sprintf("%.2f", round(I2, 2)),
+    " \\[",
+    sprintf("%.2f", round(I2.lower, 2)),
+    ", ",
+    sprintf("%.2f", round(I2.upper, 2)),
+    "\\]"
+  )) |>
   mutate(print_p = paste0(
-     sprintf("%.2f",round(p_between,2)), 
-    " \\[", 
-    sprintf("%.2f",round(p_between.lower,2)),
-    ", ", 
-    sprintf("%.2f", round(p_between.upper,2)),
-    "\\]")
-    ) |>  
-  mutate(print_ES=case_when(nonzero~paste0("**",print_ES,"**"),TRUE~print_ES)) |> 
-  select(trait = full_names, 
-         `predicted overall mean _Zr_`=print_ES, 
-         `absolute heterogeneity $\\tau^2 + \\sigma^2$` = print_tau2,
-         `relative heterogeneity _I^2^_` = print_I2,
-         `proportion of absolute heterogeneity associated with between-cities differences` = print_p) |> 
-  mutate(trait = fct_relevel(trait,
-                             "spider length","relative abdomen area",
-                      "mesh width", "web radius",
-                      "abdomen brightness")) |> 
+    sprintf("%.2f", round(p_between, 2)),
+    " \\[",
+    sprintf("%.2f", round(p_between.lower, 2)),
+    ", ",
+    sprintf("%.2f", round(p_between.upper, 2)),
+    "\\]"
+  )) |>
+  mutate(print_ES = case_when(nonzero ~ paste0("**", print_ES, "**"), TRUE ~ print_ES)) |>
+  select(
+    trait = full_names,
+    `predicted overall mean _Zr_` = print_ES,
+    `absolute heterogeneity $\\tau^2 + \\sigma^2$` = print_tau2,
+    `relative heterogeneity _I^2^_` = print_I2,
+    `proportion of absolute heterogeneity associated with between-cities differences` = print_p
+  ) |>
+  mutate(trait = fct_relevel(
+    trait,
+    "spider length", "relative abdomen area",
+    "mesh width", "web radius",
+    "abdomen brightness"
+  )) |>
   arrange(trait)
 
-#knitr::kable(table1)
+# knitr::kable(table1)
 knitr::kable(table1 |> # pivot the table
-               pivot_longer(cols=-trait) |> 
-               rename(`  `="name") |> 
-               pivot_wider(names_from = trait,values_from = value)
-             )
-
+  pivot_longer(cols = -trait) |>
+  rename(`  ` = "name") |>
+  pivot_wider(names_from = trait, values_from = value))
 ```
 
 ### Plots
 
-```{r}
+```{r plot-colours}
 main_colour <- "#998ec3"
 pale_colour <- "#d8daeb"
 ```
 
 #### caterpillar plots
 
-```{r}
-make_caterpillar_plot<- function(ES_fits,PI_fits,overall_fits,ES_observed,plot_annotations,response){
-  
- filtered_observed <- ES_observed |> filter(response_name==response)
- filtered_PI <- PI_fits|> filter(response_name==response)
- filtered_ES <- ES_fits|> filter(response_name==response)
- filtered_overall <- overall_fits|> filter(response_name==response)
- ranking <- ES_fits|> filter(response_name==response)|> group_by(study) |> 
-   summarise(mean=mean(.epred)) |> mutate(ranked=factor(rank(mean))) 
- 
-p_main <- ggplot() +
-  stat_lineribbon(data = expand_grid(filtered_PI,ranking),
-                  aes(x = overall.PI,y=ranked), .width = 0.95, fill = pale_colour) +
-  stat_lineribbon(data = expand_grid(filtered_overall,ranking),
-                  aes(x = overall.epred,y=ranked), .width = 0.95, fill = main_colour) +
-  stat_pointinterval(
-    data = filtered_ES |> left_join(ranking),
-    aes(x = .epred, y = ranked),.width=c(0,0.95),
-  ) +
-  geom_point(
-    data = filtered_observed |> left_join(ranking),
-    aes(x = yi, y = ranked, size = 1 / vi),
-    pch = 21, fill = "white", alpha = 0.5
-  ) +
-  geom_vline(xintercept = 0, linetype = 2) +
-  scale_y_discrete("", limits = rev) +
-  scale_x_continuous("effect size (Zr)") +
-  coord_cartesian(xlim = c(-1.2, 1.2))+
-  facet_wrap(~full_names)+
-  theme_bw() +
-  theme(legend.position = "none", 
-        axis.ticks.y = element_blank(), 
-        axis.text.y = element_blank()
-        )
-  
-  
-p_main
-  
+```{r caterpillar-plot-function}
+make_caterpillar_plot <- function(ES_fits, PI_fits, overall_fits, ES_observed, plot_annotations, response) {
+  filtered_observed <- ES_observed |> filter(response_name == response)
+  filtered_PI <- PI_fits |> filter(response_name == response)
+  filtered_ES <- ES_fits |> filter(response_name == response)
+  filtered_overall <- overall_fits |> filter(response_name == response)
+  ranking <- ES_fits |>
+    filter(response_name == response) |>
+    group_by(study) |>
+    summarise(mean = mean(.epred)) |>
+    mutate(ranked = factor(rank(mean)))
+
+  p_main <- ggplot() +
+    stat_lineribbon(
+      data = expand_grid(filtered_PI, ranking),
+      aes(x = overall.PI, y = ranked), .width = 0.95, fill = pale_colour
+    ) +
+    stat_lineribbon(
+      data = expand_grid(filtered_overall, ranking),
+      aes(x = overall.epred, y = ranked), .width = 0.95, fill = main_colour
+    ) +
+    stat_pointinterval(
+      data = filtered_ES |> left_join(ranking),
+      aes(x = .epred, y = ranked), .width = c(0, 0.95),
+    ) +
+    geom_point(
+      data = filtered_observed |> left_join(ranking),
+      aes(x = yi, y = ranked, size = 1 / vi),
+      pch = 21, fill = "white", alpha = 0.5
+    ) +
+    geom_vline(xintercept = 0, linetype = 2) +
+    scale_y_discrete("", limits = rev) +
+    scale_x_continuous("effect size (Zr)") +
+    coord_cartesian(xlim = c(-1.2, 1.2)) +
+    facet_wrap(~full_names) +
+    theme_bw() +
+    theme(
+      legend.position = "none",
+      axis.ticks.y = element_blank(),
+      axis.text.y = element_blank()
+    )
+
+
+  p_main
 }
 ```
 
-```{r}
-plot_abdomen <- make_caterpillar_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"log_abdomen")
-plot_size <- make_caterpillar_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"spider_length")
-plot_radius <- make_caterpillar_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"radius")
-plot_mesh <- make_caterpillar_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"mesh_size")
-plot_brightness <- make_caterpillar_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"brightness")
+```{r caterpillar-plots}
+plot_abdomen <- make_caterpillar_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "log_abdomen")
+plot_size <- make_caterpillar_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "spider_length")
+plot_radius <- make_caterpillar_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "radius")
+plot_mesh <- make_caterpillar_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "mesh_size")
+plot_brightness <- make_caterpillar_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "brightness")
 
 
-fig3 <- (plot_size+plot_abdomen+plot_radius+plot_mesh+plot_brightness)+
-  plot_layout(ncol=3,nrow=2)
+caterplot <- (plot_size + plot_abdomen + plot_radius + plot_mesh + plot_brightness) +
+  plot_layout(ncol = 3, nrow = 2)
 ```
 
-```{r, dev='cairo_pdf'}
-ggsave(here("plots","fig3.pdf"), plot = fig3, width = 9, height = 6)
-ggsave(here("plots","fig3.png"), plot = fig3, width = 9, height = 6)
+```{r save-caterpillar-plots, dev='cairo_pdf'}
+ggsave(here("plots", "fig4.pdf"), plot = caterplot, width = 9, height = 6)
+ggsave(here("plots", "fig4.png"), plot = caterplot, width = 9, height = 6)
 ```
 
 
@@ -463,124 +483,135 @@ ggsave(here("plots","fig3.png"), plot = fig3, width = 9, height = 6)
 #### "forest" plots
 
 
-```{r}
-make_forest_plot <- function(ES_fits,PI_fits,overall_fits,ES_observed,plot_annotations,response){
-  
-  study_list <- filter(ES_observed, response_name==response)$study
-  
-  p_main <- ggplot() +
-  stat_lineribbon(data = expand_grid(PI_fits|> filter(response_name==response),study=study_list),
-                  aes(x = overall.PI,y=study), .width = 0.95, fill = pale_colour) +
-  stat_lineribbon(data = expand_grid(overall_fits|> filter(response_name==response),study=study_list),
-                  aes(x = overall.epred,y=study), .width = 0.95, fill = main_colour) +
-  stat_pointinterval(
-    data = ES_fits |> filter(response_name==response),
-    aes(x = .epred, y = study),.width=c(0,0.95),
-  ) +
-  geom_point(
-    data = left_join(ES_observed,plot_annotations) |> filter(response_name==response),
-    aes(x = yi, y = study, size = 1 / vi),
-    pch = 21, fill = "white", alpha = 0.5
-  ) +
-  geom_vline(xintercept = 0, linetype = 2) +
-  scale_y_discrete("City and Year of visit", limits = rev) +
-  scale_x_continuous("effect size (Zr)") +
-  coord_cartesian(xlim = c(-1.2, 1.2))+
-  facet_wrap(~full_names)+
-  theme_bw() +
-  theme(legend.position = "none")
-  
-  
-arrows_annotate <- plot_annotations |>
-  filter(response_name==response) |> 
-  pivot_longer(cols=c(negative_annotation,positive_annotation),
-               values_to = "label")|> 
-  mutate(x = c(-0.4, 0.4)) |>
-  ggplot() +
-  geom_segment(aes(x = x * 0.25, xend = x * 0.8, y = 0, yend = 0),
-    arrow = arrow(type = "closed", angle = 15, length = unit(0.5, "cm"))
-  ) +
-  geom_text(aes(x = 0.9 * x, y = 0, label = label, hjust = c(1, 0))) +
-  coord_cartesian(xlim = c(-0.8, 0.8)) +
-  theme_void()
+```{r make-forest-plot-function}
+make_forest_plot <- function(ES_fits, PI_fits, overall_fits, ES_observed, plot_annotations, response) {
+  study_list <- filter(ES_observed, response_name == response)$study
 
-(p_main / arrows_annotate) + plot_layout(heights = c(0.85, 0.15))
-  
-  
+  p_main <- ggplot() +
+    stat_lineribbon(
+      data = expand_grid(PI_fits |> filter(response_name == response), study = study_list),
+      aes(x = overall.PI, y = study), .width = 0.95, fill = pale_colour
+    ) +
+    stat_lineribbon(
+      data = expand_grid(overall_fits |> filter(response_name == response), study = study_list),
+      aes(x = overall.epred, y = study), .width = 0.95, fill = main_colour
+    ) +
+    stat_pointinterval(
+      data = ES_fits |> filter(response_name == response),
+      aes(x = .epred, y = study), .width = c(0, 0.95),
+    ) +
+    geom_point(
+      data = left_join(ES_observed, plot_annotations) |> filter(response_name == response),
+      aes(x = yi, y = study, size = 1 / vi),
+      pch = 21, fill = "white", alpha = 0.5
+    ) +
+    geom_vline(xintercept = 0, linetype = 2) +
+    scale_y_discrete("City and Year of visit", limits = rev) +
+    scale_x_continuous("effect size (Zr)") +
+    coord_cartesian(xlim = c(-1.2, 1.2)) +
+    facet_wrap(~full_names) +
+    theme_bw() +
+    theme(legend.position = "none")
+
+
+  arrows_annotate <- plot_annotations |>
+    filter(response_name == response) |>
+    pivot_longer(
+      cols = c(negative_annotation, positive_annotation),
+      values_to = "label"
+    ) |>
+    mutate(x = c(-0.4, 0.4)) |>
+    ggplot() +
+    geom_segment(aes(x = x * 0.25, xend = x * 0.8, y = 0, yend = 0),
+      arrow = arrow(type = "closed", angle = 15, length = unit(0.5, "cm"))
+    ) +
+    geom_text(aes(x = 0.9 * x, y = 0, label = label, hjust = c(1, 0))) +
+    coord_cartesian(xlim = c(-0.8, 0.8)) +
+    theme_void()
+
+  (p_main / arrows_annotate) + plot_layout(heights = c(0.85, 0.15))
 }
 ```
 
 
-```{r}
-plot_abdomen <- make_forest_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"log_abdomen")
-plot_size <- make_forest_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"spider_length")
-plot_radius <- make_forest_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"radius")
-plot_mesh <- make_forest_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"mesh_size")
-plot_brightness <- make_forest_plot(ES_fits,PI_fits,overall_fits,data,plot_annotations,"brightness")
+```{r make-forest-plots}
+plot_abdomen <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "log_abdomen")
+plot_size <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "spider_length")
+plot_radius <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "radius")
+plot_mesh <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "mesh_size")
+plot_brightness <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "brightness")
 ```
 
-```{r, dev='cairo_pdf'}
-ggsave(here("plots","SUPPL_forest_abdomen.pdf"), plot = plot_abdomen, width = 6, height = 6)
-ggsave(here("plots","SUPPL_forest_abdomen.png"), plot = plot_abdomen, width = 6, height = 6)
+```{r save-forest-plots, dev='cairo_pdf'}
+ggsave(here("plots", "SUPPL_forest_abdomen.pdf"), plot = plot_abdomen, width = 6, height = 6)
+ggsave(here("plots", "SUPPL_forest_abdomen.png"), plot = plot_abdomen, width = 6, height = 6)
 
-ggsave(here("plots","SUPPL_forest_size.pdf"), plot = plot_size, width = 6, height = 6)
-ggsave(here("plots","SUPPL_forest_size.png"), plot = plot_size, width = 6, height = 6)
+ggsave(here("plots", "SUPPL_forest_size.pdf"), plot = plot_size, width = 6, height = 6)
+ggsave(here("plots", "SUPPL_forest_size.png"), plot = plot_size, width = 6, height = 6)
 
-ggsave(here("plots","SUPPL_forest_radius.pdf"), plot = plot_radius, width = 6, height = 6)
-ggsave(here("plots","SUPPL_forest_radius.png"), plot = plot_radius, width = 6, height = 6)
+ggsave(here("plots", "SUPPL_forest_radius.pdf"), plot = plot_radius, width = 6, height = 6)
+ggsave(here("plots", "SUPPL_forest_radius.png"), plot = plot_radius, width = 6, height = 6)
 
-ggsave(here("plots","SUPPL_forest_mesh.pdf"), plot = plot_mesh, width = 6, height = 6)
-ggsave(here("plots","SUPPL_forest_mesh.png"), plot = plot_mesh, width = 6, height = 6)
+ggsave(here("plots", "SUPPL_forest_mesh.pdf"), plot = plot_mesh, width = 6, height = 6)
+ggsave(here("plots", "SUPPL_forest_mesh.png"), plot = plot_mesh, width = 6, height = 6)
 
-ggsave(here("plots","SUPPL_forest_brightness.pdf"), plot = plot_brightness, width = 6, height = 6)
-ggsave(here("plots","SUPPL_forest_brightness.png"), plot = plot_brightness, width = 6, height = 6)
+ggsave(here("plots", "SUPPL_forest_brightness.pdf"), plot = plot_brightness, width = 6, height = 6)
+ggsave(here("plots", "SUPPL_forest_brightness.png"), plot = plot_brightness, width = 6, height = 6)
 ```
 
 
 #### heterogeneity plots
 
 
-```{r}
-
-plot_I2 <- ggplot(varcomps |> left_join(plot_annotations))+
-  stat_halfeye(aes(x= I2,y=full_names),
-               .width = c(0,0.95), fill = main_colour,point_interval = "mean_qi")+
-  scale_x_continuous("relative heterogeneity *I*^2^",limits = c(0,1))+
-  scale_y_discrete("",limits=rev)+
-  theme_bw()+
+```{r heterogeneity-plots}
+plot_I2 <- ggplot(varcomps |> left_join(plot_annotations)) +
+  stat_halfeye(aes(x = I2, y = full_names),
+    .width = c(0, 0.95), fill = main_colour, point_interval = "mean_qi"
+  ) +
+  scale_x_continuous("relative heterogeneity *I*^2^", limits = c(0, 1)) +
+  scale_y_discrete("", limits = rev) +
+  theme_bw() +
   theme(axis.title = element_markdown())
 
-plot_abs_heterogeneity <- ggplot(varcomps|> left_join(plot_annotations))+
-  stat_halfeye(aes(x= var_rand,y=full_names),
-               .width = c(0,0.95), fill = main_colour,point_interval = "mean_qi")+
-  scale_x_continuous("absolute heterogeneity &tau;^2^ + &sigma;^2^")+
-  scale_y_discrete("",limits=rev)+
-  theme_bw()+
+plot_abs_heterogeneity <- ggplot(varcomps |> left_join(plot_annotations)) +
+  stat_halfeye(aes(x = var_rand, y = full_names),
+    .width = c(0, 0.95), fill = main_colour, point_interval = "mean_qi"
+  ) +
+  scale_x_continuous("absolute heterogeneity &tau;^2^ + &sigma;^2^") +
+  scale_y_discrete("", limits = rev) +
+  theme_bw() +
   theme(axis.title = element_markdown())
 
-plot_between_within <- ggplot(varcomps|> left_join(plot_annotations))+
-  stat_halfeye(aes(x= p_between,y=full_names),
-               .width = c(0,0.95), fill = main_colour,point_interval = "mean_qi")+
-  scale_x_continuous("city-level repeatability",limits = c(0,1))+
-  scale_y_discrete("",limits=rev)+
-  theme_bw()+
+plot_between_within <- ggplot(varcomps |> left_join(plot_annotations)) +
+  stat_halfeye(aes(x = p_between, y = full_names),
+    .width = c(0, 0.95), fill = main_colour, point_interval = "mean_qi"
+  ) +
+  scale_x_continuous("city-level repeatability", limits = c(0, 1)) +
+  scale_y_discrete("", limits = rev) +
+  theme_bw() +
   theme(axis.title = element_markdown())
 ```
 
 
-```{r, dev='cairo_pdf'}
-ggsave(here("plots","SUPPL_I2.pdf"), 
-       plot = plot_I2, width = 5, height = 5)
-ggsave(here("plots","SUPPL_I2.png"), 
-       plot = plot_I2, width = 5, height = 5)
+```{r save-heterogeneity-plots, dev='cairo_pdf'}
+ggsave(here("plots", "SUPPL_I2.pdf"),
+  plot = plot_I2, width = 5, height = 5
+)
+ggsave(here("plots", "SUPPL_I2.png"),
+  plot = plot_I2, width = 5, height = 5
+)
 
-ggsave(here("plots","SUPPL_abs_heterogeneity.pdf"), 
-       plot = plot_abs_heterogeneity, width = 5, height = 5)
-ggsave(here("plots","SUPPL_abs_heterogeneity.png"), 
-       plot = plot_abs_heterogeneity, width = 5, height = 5)
+ggsave(here("plots", "SUPPL_abs_heterogeneity.pdf"),
+  plot = plot_abs_heterogeneity, width = 5, height = 5
+)
+ggsave(here("plots", "SUPPL_abs_heterogeneity.png"),
+  plot = plot_abs_heterogeneity, width = 5, height = 5
+)
 
-ggsave(here("plots","SUPPL_between_within.pdf"), 
-       plot = plot_between_within, width = 5, height = 5)
-ggsave(here("plots","SUPPL_between_within.png"), 
-       plot = plot_between_within, width = 5, height = 5)
+ggsave(here("plots", "SUPPL_between_within.pdf"),
+  plot = plot_between_within, width = 5, height = 5
+)
+ggsave(here("plots", "SUPPL_between_within.png"),
+  plot = plot_between_within, width = 5, height = 5
+)
 ```
