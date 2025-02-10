@@ -1,4 +1,3 @@
-
 # GHSL low-res (1000m) data
 
 
