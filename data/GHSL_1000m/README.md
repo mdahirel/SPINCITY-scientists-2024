@@ -1,5 +1,5 @@
 
-# GHSL high-res (1000m) data
+# GHSL low-res (1000m) data
 
 
  To re-run `R/03_get_GHSL_urban_areas_info.qmd`, large files from the GHSL (<https://human-settlement.emergency.copernicus.eu/download.php>, version R2023A), must be re-downloaded and included in this folder; see list below (check <https://human-settlement.emergency.copernicus.eu/legacyData.php> to find R2023A if it becomes superseded by newer versions).
