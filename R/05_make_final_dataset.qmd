@@ -6,9 +6,9 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(tidyverse)
-library(sf)
-library(here)
+library(tidyverse) # CRAN v2.0.0
+library(sf)        # CRAN v1.0-19
+library(here)      # CRAN v1.0.1
 ```
 
 We start by loading all the data tables we prepped through the previous scripts
@@ -47,7 +47,9 @@ data_allscales <- left_join(effect_sizes, urban_info) |>
   ) |> 
   mutate(study = case_when(urban_area=="Vancouver" & year == 2022~study,
          TRUE~str_replace(study,"[:digit:]$", "  "))
-  ) # to avoid unnecessary numbers in plots, as Vancouver 2022 is only year/city combination with multiple "studies"
+  ) 
+# we remove the last digit (the "team" ID) of the "study" variable
+# to avoid unnecessary numbers in plots, as Vancouver 2022 is only year/city combination with multiple "studies"
 ```
 
 that we can save
