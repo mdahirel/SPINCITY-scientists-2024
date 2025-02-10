@@ -47,7 +47,7 @@ data_allscales <- left_join(effect_sizes, urban_info) |>
   ) |> 
   mutate(study = case_when(urban_area=="Vancouver" & year == 2022~study,
          TRUE~str_replace(study,"[:digit:]$", "  "))
-  ) # to avoid unnecessary numbers in plots, Vancouver 2022 is only year/city combination with multiples
+  ) # to avoid unnecessary numbers in plots, as Vancouver 2022 is only year/city combination with multiple "studies"
 ```
 
 that we can save
