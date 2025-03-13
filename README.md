@@ -10,4 +10,6 @@ title: pending
 
 link to preprint: upcoming
 
-This folder is a RStudio project folder, and the script uses the `here` package (see also [here](https://github.com/jennybc/here_here)) to further ensure all files paths are relative.
+This folder is a RStudio project folder, and the script uses the `here` package (see also [here](https://github.com/jennybc/here_here)) to further ensure all files paths are relative.  
+
+See the READMEs in the various subfolders for details on files.
