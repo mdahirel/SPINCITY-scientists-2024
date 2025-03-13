@@ -4,6 +4,8 @@ This folder contains the various data files used in analyses.
 
 - The `CRU`, `GHSL_10m` and `GHSL_1000m` subfolders are meant to contain large raw raster files downloaded from external archives, from which we extracted relevant data. Due to their size, these raw files are **not** archived, only the outputs used in further analyses; see the `README` files in each subfolder for details.
 
+- The `raw_colour` sub-folder contains raw colour files that are processed to obtain spider relative brightness values (`SPINCITY_calibrated_abdomen_colours.csv`); see the `README` in that subfolder for details.
+
 - `CRUtmp_1991-2020.csv` is the result of processing the data in the `CRU` subfolder for further analyses (`01_get_temperature_CRU.qmd`). It contains average annual temperatures for each focal urban area
 
 - `GHSL_10m_BUILT_spiders.csv` is the result of processing the data in the `GHSL_10m` subfolder (`02_get_GHSL_buffers_highres.qmd`). It contains information about built-up proportion in buffers around each sampled spider
@@ -14,7 +16,9 @@ This folder contains the various data files used in analyses.
 
 - `Tolan_et_al_2024_tree_cover.csv` contains information about the average tree cover in the focal urban area. Data from Tolan et al. 2024 (<https://doi.org/10.1016/j.rse.2023.113888>) were accessed and processed through Google Earth Engine and QGIS. See `R/GEE` for example code used in GEE extractions, and R code to obtain the bounding boxes used for these extractions.
 
-- `SPINCITY_raw_spiders.csv` contains the raw spider data;  `SPINCITY_raw_spiders_mollweide.gpkg` is a reprojected version, to match the projection of the GHSL data
+- `SPINCITY_raw_spiders.csv` contains the raw spider data (excluding colour measurements);  `SPINCITY_raw_spiders_mollweide.gpkg` is a reprojected version (coordinates and spider ID only), to match the projection of the GHSL data
+
+- `SPINCITY_calibrated_abdomen_colours.csv` contains the calibrated abdomen brightness data. The result of running `R/00_card_brightness_sphere_spectrophotometry.qmd` then `R/00_get_calibrated_colour.qmd`
 
 - `SPINCITY_area_names.csv` is a Rosetta stone-like file matching location names as entered in `SPINCITY_raw_spiders.csv` with the correct GHSL urban areas (for instance, Berkeley and San Francisco were initially recorded as separate cities, but are actually part of the same Bay Area urban centre for our analyses)
 

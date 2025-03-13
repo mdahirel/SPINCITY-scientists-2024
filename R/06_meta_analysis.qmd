@@ -142,7 +142,7 @@ We can now move to the models
 ### the models
 
 ```{r models-no-moderators}
-fit_meta_int <- function(data, resp, adapt_delta = 0.99, iter = 2000, warmup = 1000) {
+fit_meta_int <- function(data, resp, adapt_delta = 0.99, iter = 4000, warmup = 2000) {
   # bayesian meta-analytic models are a bit harder to make converge than usual models, hence,the higher default adapt_delta
   model <- brm(
     yi | se(sqrt(vi)) ~ (1 | urban_area / study),
@@ -168,11 +168,12 @@ modint_radius <- fit_meta_int(data, "radius")
 modint_mesh <- fit_meta_int(data, "mesh_size")
 ```
 
-```{r sumamry-model}
+```{r summary-model}
 summary(modint_size)
 ## look at Rhat and ESSs
 pp_check(modint_size)
-## do both for all models
+pp_check(modint_size,"pit_ecdf")
+## see help to see what other posterior predictive checks may be useful
 ```
 
 

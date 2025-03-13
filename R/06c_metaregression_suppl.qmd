@@ -37,7 +37,7 @@ data <- data_allscales |>
 # Bayesian metaregression, all moderators at the same time
 
 ```{r models-all-moderators}
-fit_metareg_all <- function(data, resp, adapt_delta = 0.99, iter = 2000, warmup = 1000) {
+fit_metareg_all <- function(data, resp, adapt_delta = 0.99, iter = 4000, warmup = 2000) {
   model <- brm(
     yi | se(sqrt(vi)) ~ scale(annual_tmp) + scale(log(area_LAND_km2, 10)) +
       scale(mean_pTREE) + scale(mean_human_modification_50km) +
@@ -64,10 +64,11 @@ metareg_all_mesh <- fit_metareg_all(data, "mesh_size")
 ```
 
 ```{r check-statistics}
-summary(metareg_all_size) 
+summary(metareg_all_size)
 ## look at Rhat and ESSs
 pp_check(metareg_all_size)
-## do both for all models
+pp_check(metareg_all_size,"pit_ecdf")
+## do for all models
 ```
 
 

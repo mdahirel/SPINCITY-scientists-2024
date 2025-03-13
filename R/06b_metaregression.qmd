@@ -81,7 +81,7 @@ metaregs_uni <- prep_uni |>
           set_prior("normal(0,0.4)", class = "sd")
         ),
         control = list(adapt_delta = 0.99),
-        iter = 2000, warmup = 1000
+        iter = 4000, warmup = 2000
       )
       return(mod)
     }
@@ -147,6 +147,7 @@ Extract the models to plot:
 ```{r get-models}
 mod_radius_tmp <- (metaregs_uni |> filter(response_name == "radius" & moderator == "annual_tmp"))$model[[1]]
 mod_abdomen_date <- (metaregs_uni |> filter(response_name == "log_abdomen" & moderator == "mean_yday_prop"))$model[[1]]
+mod_brightness_date <- (metaregs_uni |> filter(response_name == "brightness" & moderator == "mean_yday_prop"))$model[[1]]
 ```
 
 
@@ -154,6 +155,18 @@ mod_abdomen_date <- (metaregs_uni |> filter(response_name == "log_abdomen" & mod
 arrows_annotate <- tibble(
   y = c(-0.5, 0.5),
   label = c("smaller in cities", "larger in cities")
+) |>
+  ggplot() +
+  geom_segment(aes(y = y * 0.25, yend = y * 0.8, x = 0, xend = 0),
+    arrow = arrow(type = "closed", angle = 15, length = unit(0.5, "cm"))
+  ) +
+  geom_text(aes(y = 0.9 * y, x = 0, label = label, vjust = c(1, 0))) +
+  coord_cartesian(ylim = c(-0.85, 0.85)) +
+  theme_void()
+
+arrows_annotate_brightness <- tibble(
+  y = c(-0.5, 0.5),
+  label = c("darker in cities", "lighter in cities")
 ) |>
   ggplot() +
   geom_segment(aes(y = y * 0.25, yend = y * 0.8, x = 0, xend = 0),
@@ -248,6 +261,45 @@ make_main_plot <- function(model, data, resp) {
       theme(legend.position = "none")
   }
 
+  
+  if (resp == "brightness") {
+    overall_fit <- tibble(
+      mean_yday_prop = (68:79) / 100,
+      vi = 0, ## aux vars needed as placeholder for epred internals, not used here and doesn't affect result
+    ) |>
+      add_epred_draws(model, re_formula = NA)
+
+    PE_fit <- tibble(
+      mean_yday_prop = (68:79) / 100,
+      urban_area = "x", study = "y",
+      vi = 0,
+    ) |>
+      add_epred_draws(model, re_formula = ~ (1 | urban_area / study), allow_new_levels = TRUE)
+
+
+    xlabel <- "mean sampling date (proportion of year elapsed)"
+    ylabel <- "effect size (Zr, abdomen brightness)"
+
+    p_main <- ggplot() +
+      stat_lineribbon(data = PE_fit, aes(x = mean_yday_prop, y = .epred), .width = 0.95, fill = pale_colour) +
+      stat_lineribbon(data = overall_fit, aes(x = mean_yday_prop, y = .epred), .width = 0.95, fill = main_colour) +
+      stat_pointinterval(
+        data = effect_size_fit,
+        aes(x = mean_yday_prop, y = .epred), .width = c(0, 0.95), alpha = 0.4
+      ) +
+      geom_point(
+        data = tt,
+        aes(x = mean_yday_prop, yi, size = 1 / vi),
+        pch = 21, fill = "white", alpha = 0.5
+      ) +
+      geom_hline(yintercept = 0, linetype = 2) +
+      scale_y_continuous(ylabel) +
+      scale_x_continuous(xlabel,breaks=c(0.68,0.7,0.72,0.74,0.76,0.78,0.8)) +
+      theme_bw() +
+      coord_cartesian(ylim = c(-1.3, 1.3)) +
+      theme(legend.position = "none")
+  }
+  
   return(p_main)
 }
 ```
@@ -256,19 +308,27 @@ make_main_plot <- function(model, data, resp) {
 ```{r make-plots}
 p_main_radius <- make_main_plot(mod_radius_tmp, data, resp = "radius")
 p_main_abdomen <- make_main_plot(mod_abdomen_date, data, resp = "log_abdomen")
+p_main_brightness <- make_main_plot(mod_brightness_date, data, resp = "brightness")
 
 
-fig4 <- (arrows_annotate | p_main_radius) + plot_layout(widths = c(0.2, 0.8))
+fig5 <- (arrows_annotate | p_main_radius) + plot_layout(widths = c(0.2, 0.8))
 
-fig5 <- (arrows_annotate | p_main_abdomen) + plot_layout(widths = c(0.2, 0.8))
+fig6 <- (arrows_annotate|p_main_abdomen) + 
+  plot_layout(widths = c(0.2, 0.8))
+
+fig7 <- (arrows_annotate_brightness|p_main_brightness) + 
+  plot_layout(widths = c(0.2, 0.8))
 ```
 
 ```{r save-plots, dev='cairo_pdf'}
-ggsave(here("plots", "fig5.pdf"), plot = fig4, width = 7, height = 5)
-ggsave(here("plots", "fig5.png"), plot = fig4, width = 7, height = 5)
+ggsave(here("plots", "fig5.pdf"), plot = fig5, width = 7, height = 5)
+ggsave(here("plots", "fig5.png"), plot = fig5, width = 7, height = 5)
 
-ggsave(here("plots", "fig6.pdf"), plot = fig5, width = 7, height = 5)
-ggsave(here("plots", "fig6.png"), plot = fig5, width = 7, height = 5)
+ggsave(here("plots", "fig6.pdf"), plot = fig6, width = 7, height = 5)
+ggsave(here("plots", "fig6.png"), plot = fig6, width = 7, height = 5)
+
+ggsave(here("plots", "fig7.pdf"), plot = fig7, width = 7, height = 5)
+ggsave(here("plots", "fig7.png"), plot = fig7, width = 7, height = 5)
 ```
 
 
@@ -291,7 +351,6 @@ mod_freq <- rma.mv(
 )
 
 robust(mod_freq, cluster = urban_area, clubSandwich = TRUE)
-coef_test(mod_freq, vcov = "CR2")
 
 summary(mod_freq)
 anova(mod_freq, btt = 2)

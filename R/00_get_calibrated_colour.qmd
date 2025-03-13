@@ -1,0 +1,106 @@
+---
+title: "Use calibration curves to convert images measurements to reflectance"
+author: Bart Vanthournout and Maxime Dahirel
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-packages}
+library(tidyverse) # CRAN v2.0.0
+library(here)      # CRAN v1.0.1
+```
+
+!! `R/00_card_brightness_sphere_spectrophotometry.qmd` must be run first !!
+
+the goal here is to use the card reflectance measurements obtained from spectro data (from `R/00_card_brightness_sphere_spectrophotometry.qmd`) to convert spider darkness measurements from images into actual relative reflectance, using card darkness measurements taken from the same image
+
+Let's start by loading the data:
+
+```{r load-data}
+rawcolour <- read_csv(here("data", "raw_colour", "SPINCITY_raw-colour-measurements.csv"))
+card <- read_csv(here("data", "raw_colour", "SPINCITY_testcard-reflectance.csv"))
+```
+
+We then select the `abdomen_brightness` measurement as it's the one we will analyse in this study (you can adapt the code to calibrate the other measurements easily) as well as the columns (`white` to `black`) with the measurements taken on the card (we also of course keep the spider `ID`).
+
+We removed the obs with no valid set of card measurements (no card, no calibration possible) and join the photo data together with the spectro measurements:
+
+```{r join-data}
+raw_joined <- rawcolour |>
+  select(ID, abdomen_brightness, white:black) |>
+  rowwise() |> 
+  mutate(NAcards = rowSums(is.na(pick(white:black)))) |> 
+  filter(NAcards <= 1) |> 
+  # we remove obs where the card was not good enough to be measured
+  # we tolerate 1 missing value among the nine of the card
+  # there is only 1 card that has not all values or all NAs anyway, and it has 1 NA
+  pivot_longer(white:black, values_to = "valuecard") |>
+  left_join(card)
+```
+
+From there we can use `purrr::map()` to fit the calibration curve for each image, and then apply the calibration to the corresponding abdomen measurements:
+
+```{r calibrate}
+fitted_data <- raw_joined |>
+  nest(.by = c(ID, abdomen_brightness)) |>
+  filter(!is.na(abdomen_brightness)) |>
+  mutate(model = map(
+    .x = data,
+    .f = function(.x) {
+      nls(spectro ~ a * exp(r * valuecard), data = .x, start = c(a = 6, r = 0.01), control = list(maxiter = 1000))
+    }
+  )) |>
+  mutate(calibcurves = map2(
+    .x = data, .y = model, .f = function(.x, .y) {
+      fitcurve <- tibble(valuecard = 0:255)
+      fitcurve$predicted <- predict(.y, newdata = fitcurve)
+
+      p <- ggplot() +
+        geom_point(data = .x, aes(valuecard, spectro), size = 2) +
+        geom_line(data = fitcurve, aes(valuecard, predicted), col = "red") +
+        scale_x_continuous("value from image") +
+        scale_y_continuous("reflectance value from spectro") +
+        theme_bw()
+
+      return(p)
+    }
+  )) |>
+  mutate(abdomen_brightness_cor = map2(
+    .x = abdomen_brightness, .y = model, .f = function(.x, .y) {
+      coefs <- coef(.y)
+
+      valuecor <- coefs["a"] * exp(.x * coefs["r"])
+
+      return(valuecor)
+    }
+  ))
+```
+
+Along the way, we made plots showing the calibration curves, we can visualize them, and show where the spider value falls on the curve (white dot):
+
+```{r plots}
+spider_number <- 1 # pick any number between 1 and total number of valid spiders
+
+fitted_data$calibcurves[[spider_number]] +
+  geom_point(
+    data = tibble(
+      x = fitted_data$abdomen_brightness[spider_number],
+      y = fitted_data$abdomen_brightness_cor[[spider_number]]
+    ),
+    aes(x, y),
+    size = 5, pch = 21, fill = "white"
+  ) +
+  facet_wrap(~ paste("spider ID:", fitted_data$ID[spider_number]))
+```
+
+And finally we can export the corrected values for further use:
+
+```{r export}
+fitted_data |>
+  select(ID, abdomen_brightness_cor) |>
+  unnest(abdomen_brightness_cor) |>
+  filter(!is.na(abdomen_brightness_cor)) |> 
+  write_csv(here("data", "SPINCITY_calibrated_abdomen_colours.csv"))
+```
+

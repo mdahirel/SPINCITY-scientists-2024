@@ -6,11 +6,11 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(tidyverse)
-library(sf)
-library(units)
-library(stars)
-library(here)
+library(tidyverse) # CRAN v2.0.0
+library(sf)        # CRAN v1.0-19
+library(units)     # CRAN v0.8-5
+library(stars)     # CRAN v0.6-7
+library(here)      # CRAN v1.0.1
 ```
 
 The `data/CRU` folder is where to put `nc` files downloaded from the CRU website (see `data/CRU/README.md` for more details). This code only runs if these files are there. If you are checking this directly from the archived repository (which does not contain a copy of the large `nc` files), you can skip this code and go directly to the script files that use its `csv` output, which is archived in this repo.

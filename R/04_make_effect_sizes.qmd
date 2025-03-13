@@ -6,17 +6,17 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(DHARMa)      # CRAN v0.4.7
-library(effectsize)  # CRAN v1.0.0
-library(MuMIn)       # CRAN v1.48.4
-library(metafor)     # CRAN v4.8-0
-library(parameters)  # CRAN v0.24.1
-library(performance) # CRAN v0.13.0
-library(sf)          # CRAN v1.0-19
-library(spaMM)       # CRAN v4.5.0
-library(tidyverse)   # CRAN v2.0.0
+library(DHARMa)      # CRAN v0.4.7      
+library(effectsize)  # CRAN v1.0.0  
+library(MuMIn)       # CRAN v1.48.4       
+library(metafor)     # CRAN v4.6-0     
+library(parameters)  # CRAN v0.24.0  
+library(performance) # CRAN v0.12.4 
+library(sf)          # CRAN v1.0-19          
+library(spaMM)       # CRAN v4.5.0       
+library(tidyverse)   # CRAN v2.0.0   
 
-library(here)        # CRAN v1.0.1
+library(here)        # CRAN v1.0.1        
 ```
 
 # Loading data
@@ -25,6 +25,9 @@ We start by loading the raw files as well as the built-up % calculated in `02_ge
 
 ```{r load-files}
 raw_records <- read_csv(here("data", "SPINCITY_raw_spiders.csv"))
+
+spider_colours <- read_csv(here("data","SPINCITY_calibrated_abdomen_colours.csv"))
+
 urban_areas <- read_csv(here("data", "SPINCITY_area_names.csv"))
 geoflagged <- read_csv(here("data", "SPINCITY_geoflagged.csv"))
 
@@ -35,7 +38,7 @@ polygons <- read_sf(here("data","GHSL_1000m","GHSL_SMOD_UC_DUC_2020_polygons_V2_
 
 Some info on these data:
 
-- `raw_records` is the data table containing the information collected on individual spiders
+- `raw_records` is the data table containing the information collected on individual spiders (excluding colours)
   - each spider = one row = one individual `ID`
   - `LOCATION` is a city/region ID as recorded in the original database. Does not fully match the GHSL urban areas, so `urban_areas` table used to harmonize
   - each record has a `DATE`, `LATITUDE` and `LONGITUDE`
@@ -45,7 +48,9 @@ Some info on these data:
     - `abdomen_area`: in mm^2
     - `radius` of spider web, in cm
     - `mesh_size` of spider web, in cm
-    - `abdomen_brightness_cor`, `leafdark_cor`, `leaflight_cor`: reflectance measurements averaged over the whole abdomen, the dark part of the "leaf", the light part of the "leaf", respectively. Measurements are standardized using grey standards on each photograph (see manuscript for details). The grey standard not being placed in the same light conditions as the spider led to many photographs being rejected for these measurements, hence the larger % of NA than the other traits
+
+- `colours` contains the result of running the calibration scripts
+    - `abdomen_brightness_cor`: reflectance measurements averaged over the whole abdomen. Measurements are standardized using grey standards on each photograph (see manuscript for details). The grey standard not being placed in the same light conditions as the spider led to many photographs being rejected for these measurements, hence the larger % of NA than the other traits
 
 
 - In `urban_areas`, `LOCATION` is as in ``raw_records`, `urban_area` is the corresponding GHSL UC or DUC, `country` is the country.
@@ -85,10 +90,11 @@ records_filtered_mollweide <- records_filtered |>
   )
 ```
 
-We then join the spider records with the builtup information and with the standardized names of the urban areas (as opposed to the unstandardized ones used during data entry). We rescale some variables and put some time information in more useful formats
+We then join the spider records with the colour info, the builtup information and with the standardized names of the urban areas (as opposed to the unstandardized ones used during data entry). We rescale some variables and put some time information in more useful formats
 
 ```{r data-filtering}
 data <- records_filtered_mollweide |>
+  left_join(spider_colours) |> 
   left_join(urban_areas) |> 
   left_join(builtup) |>
   mutate(
@@ -479,4 +485,5 @@ step12 <- step11 |>
 ```{r save-final-EStable}
 write_csv(step12, here("data","effect_sizes.csv"))
 ```
+
 

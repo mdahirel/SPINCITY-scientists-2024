@@ -6,12 +6,12 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(tidyverse)
-library(sf)
-library(terra)
-library(units)
-library(stars)
-library(here)
+library(tidyverse) # CRAN v2.0.0
+library(sf)        # CRAN v1.0-19
+library(terra)     # CRAN v1.8-21
+library(units)     # CRAN v0.8-5
+library(stars)     # CRAN v0.6-7
+library(here)      # CRAN v1.0.1
 ```
 
 The `data/GHSL_10m` folder and sub-folders is where to put `tif` tiles downloaded from the GHSL website (see `data/GHSL_10m/README.md` for more details). This code only runs if these files are there. If you are checking this directly from the archived repository (which does not contain a copy of these files as they are heavy), you can skip this code and go directly to the script files that use its `csv` output (starting with `R/04_make_effect_sizes.qmd`), a copy of which **is** archived in this repo.

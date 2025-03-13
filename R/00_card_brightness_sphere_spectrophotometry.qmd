@@ -1,0 +1,125 @@
+---
+title: "Convert spectro measurements of calibration cards to average reflectance"
+author: Bart Vanthournout and Maxime Dahirel
+format: html
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r load-packages}
+library(pavo) # CRAN v2.9.0
+library(tidyverse) # CRAN v2.0.0
+library(here) # CRAN v1.0.1
+```
+
+the goal here is to convert extract average reflectance values from spectrometer measurements of grey standard cards, for later use in image calibration.
+
+There are five files, one by card, and each card has been measured thrice. We will average within card and then between card, to get overall average estimates of reflectances.
+
+Let's start by loading the data:
+
+```{r load-data}
+raw_cards <- tibble(
+  filename = list.files(here("data", "raw_colour", "brightness_card"), pattern = "_sphere.csv$")
+) |>
+  mutate(card = map(
+    .x = filename,
+    .f = function(.x) {
+      read.csv(here("data", "raw_colour", "brightness_card", .x), head = TRUE, sep = ";", dec = ",")
+    }
+  ))
+```
+
+From here, we follow several steps, which we apply to each card using `purrr::map()`:
+
+- convert the data.frame import to the rspec format
+- smooth the curve
+- average the three technical measurements of each greyscale square
+- summarize then extract the reflectance values
+
+```{r play-with-cards}
+cards <- raw_cards |>
+  mutate(card1 = map(
+    .x = card,
+    .f = function(.x) {
+      as.rspec(.x, whichwl = 1, inter = TRUE, lim = c(450, 750))
+      # converts data frame to rspec
+    }
+  )) |>
+  mutate(card1.sm = map(
+    .x = card1,
+    .f = function(.x) {
+      procspec(.x, opt = "smooth") # smooths the curve
+    }
+  )) |>
+  mutate(cardmean = map(
+    .x = card1.sm,
+    .f = function(.x) {
+      aggspec(.x, by = 3) # obtain average for every three columns
+    }
+  )) |>
+  mutate(cardsummary = map(
+    .x = cardmean,
+    .f = function(.x) {
+      summary(.x)
+    }
+  )) |>
+  mutate(reflectance = map(
+    .x = cardsummary,
+    .f = function(.x) {
+      .x |>
+        rownames_to_column(var = "name") |>
+        mutate(
+          name = str_split_fixed(name, "_", 3)[, 3] |>
+            str_remove("a$")
+        ) |>
+        select(name, reflectance = B2) # see ?pavo::summary.rspec
+    }
+  ))
+```
+
+(the "cannot calculate blue chroma warning" we get here is expected and normal, given range of wavelengths available; see the plots below)
+
+We can then average the reflectance values across the five cards:
+
+```{r summarize}
+final_table <- cards |>
+  select(filename, reflectance) |>
+  unnest(cols = reflectance) |>
+  group_by(name) |>
+  summarize(spectro = mean(reflectance)) |>
+  arrange(-spectro) |>
+  mutate(name = case_when(
+    name == "white1" ~ "white",
+    name == "black1" ~ "black",
+    TRUE ~ name
+  ))
+
+final_table
+```
+
+and then save that for later use:
+
+```{r write-reflectance}
+write_csv(
+  final_table,
+  here("data", "raw_colour", "SPINCITY_testcard-reflectance.csv")
+)
+```
+
+
+If we want to look how the reflectance varies with wavelength for each card, we can plot that!
+
+```{r plot}
+cardnum <- 1
+colors <- c("darkorchid4", "darkorchid1", "darkorange4", "darkseagreen4", "darkseagreen1")
+# choose the colours for the plot, http://www.stat.columbia.edu/~tzheng/files/Rcolor.pdf
+
+plot <- aggplot(
+  cards$card1.sm[[cardnum]],
+  by = substr(names(cards$card1.sm[[cardnum]]), 1, 22),
+  lcol = colors,
+  shadecol = colors,
+  legend = TRUE
+)
+```

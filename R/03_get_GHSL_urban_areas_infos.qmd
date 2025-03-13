@@ -6,11 +6,11 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(tidyverse)
-library(sf)
-library(units)
-library(stars)
-library(here)
+library(tidyverse) # CRAN v2.0.0
+library(sf)        # CRAN v1.0-19
+library(units)     # CRAN v0.8-5
+library(stars)     # CRAN v0.6-7
+library(here)      # CRAN v1.0.1
 ```
 
 We could run this using the 10m resolution tiles (see `R/02_get_GHSL_buffers_highres.qmd`), but since the urban areas polygons are drawn at 1km resolution and there are GHSL `tif` files at 1 km resolution, we use these coarser versions to make calculations faster (we checked on a subset of urban areas, and results would be the same)
