@@ -15,9 +15,11 @@ We start by loading all the data tables we prepped through the previous scripts
 
 ```{r load-data}
 effect_sizes <- read_csv(here("data", "effect_sizes.csv"))
+countries <- read_csv(here("data", "countries.csv"))
 urban_info <- read_csv(here("data", "GHSL_urban_summary.csv"))
 human_modif <- read_csv(here("data","human_modification_50km_outside.csv"))
 CRUtmp <- read_csv(here("data", "CRUtmp_1991-2020.csv"))
+CRUpre <- read_csv(here("data", "CRUpre_1991-2020.csv"))
 treecover <- read_csv(here("data","Tolan_et_al_2024_tree_cover.csv"))
 
 coordinates <- read_sf(here("data","GHSL_1000m","GHSL_SMOD_UC_DUC_2020_polygons_V2_0_R2023A.gpkg")) |> 
@@ -33,9 +35,11 @@ to then combine them
 
 ```{r make-data}
 data_allscales <- left_join(effect_sizes, urban_info) |> 
+  left_join(countries) |> 
   left_join(human_modif) |> 
   left_join(treecover) |> 
   left_join(CRUtmp) |> 
+  left_join(CRUpre) |> 
   left_join(coordinates) |> 
   mutate(
     study = paste(urban_area, year, team),

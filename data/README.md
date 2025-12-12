@@ -6,7 +6,9 @@ This folder contains the various data files used in analyses.
 
 - The `raw_colour` sub-folder contains raw colour files that are processed to obtain spider relative brightness values (`SPINCITY_calibrated_abdomen_colours.csv`); see the `README` in that subfolder for details.
 
-- `CRUtmp_1991-2020.csv` is the result of processing the data in the `CRU` subfolder for further analyses (`01_get_temperature_CRU.qmd`). It contains average annual temperatures for each focal urban area
+- `countries.csv` contain a list of focal urban areas and their countries
+
+- `CRUtmp_1991-2020.csv` and `CRUpre_1991-2020.csv` are the result of processing the data in the `CRU` subfolder for further analyses (`01_get_temperature_CRU.qmd` and `01b_get_precipitation_CRU.qmd`). They contain average annual temperatures and precipitation totals for each focal urban area
 
 - `GHSL_10m_BUILT_spiders.csv` is the result of processing the data in the `GHSL_10m` subfolder (`02_get_GHSL_buffers_highres.qmd`). It contains information about built-up proportion in buffers around each sampled spider
 

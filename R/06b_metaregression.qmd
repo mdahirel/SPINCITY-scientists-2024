@@ -201,7 +201,7 @@ make_main_plot <- function(model, data, resp) {
       add_epred_draws(model, re_formula = ~ (1 | urban_area / study), allow_new_levels = TRUE)
 
     xlabel <- "mean annual temperature (°C)"
-    ylabel <- "effect size (Zr, radius)"
+    ylabel <- "effect size (Zr)"
 
     p_main <- ggplot() +
       stat_lineribbon(data = PE_fit, aes(x = annual_tmp, y = .epred), .width = 0.95, fill = pale_colour) +
@@ -220,7 +220,8 @@ make_main_plot <- function(model, data, resp) {
       scale_x_continuous(xlabel) +
       theme_bw() +
       coord_cartesian(ylim = c(-1, 1)) +
-      theme(legend.position = "none")
+      facet_wrap(~"web radius") +
+      theme(legend.position = "none", strip.text = element_text(size=11))
   }
 
   if (resp == "log_abdomen") {
@@ -239,7 +240,7 @@ make_main_plot <- function(model, data, resp) {
 
 
     xlabel <- "mean sampling date (proportion of year elapsed)"
-    ylabel <- "effect size (Zr, relative abdomen area)"
+    ylabel <- "effect size (Zr)"
 
     p_main <- ggplot() +
       stat_lineribbon(data = PE_fit, aes(x = mean_yday_prop, y = .epred), .width = 0.95, fill = pale_colour) +
@@ -258,7 +259,8 @@ make_main_plot <- function(model, data, resp) {
       scale_x_continuous(xlabel) +
       theme_bw() +
       coord_cartesian(ylim = c(-1.1, 1.1)) +
-      theme(legend.position = "none")
+      facet_wrap(~"relative abdomen area") +
+      theme(legend.position = "none", strip.text = element_text(size=11))
   }
 
   
@@ -278,7 +280,7 @@ make_main_plot <- function(model, data, resp) {
 
 
     xlabel <- "mean sampling date (proportion of year elapsed)"
-    ylabel <- "effect size (Zr, abdomen brightness)"
+    ylabel <- "effect size (Zr)"
 
     p_main <- ggplot() +
       stat_lineribbon(data = PE_fit, aes(x = mean_yday_prop, y = .epred), .width = 0.95, fill = pale_colour) +
@@ -297,7 +299,8 @@ make_main_plot <- function(model, data, resp) {
       scale_x_continuous(xlabel,breaks=c(0.68,0.7,0.72,0.74,0.76,0.78,0.8)) +
       theme_bw() +
       coord_cartesian(ylim = c(-1.3, 1.3)) +
-      theme(legend.position = "none")
+      facet_wrap(~"abdomen brightness") +
+      theme(legend.position = "none", strip.text = element_text(size=11))
   }
   
   return(p_main)

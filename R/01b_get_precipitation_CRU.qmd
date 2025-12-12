@@ -1,5 +1,5 @@
 ---
-title: "Summarising CRU-TS climatologies of GHSL urban areas - temperature"
+title: "Summarising CRU-TS climatologies of GHSL urban areas - precipitation"
 format: html
 editor_options: 
   chunk_output_type: console
@@ -13,12 +13,12 @@ library(stars)     # CRAN v0.6-7
 library(here)      # CRAN v1.0.1
 ```
 
-The `data/CRU/tmp` folder is where to put `nc` files downloaded from the CRU website (see `data/CRU/tmp/README.md` for more details). This code only runs if these files are there. If you are checking this directly from the archived repository (which does not contain a copy of the large `nc` files), you can skip this code and go directly to the script files that use its `csv` output, which is archived in this repo.
+The `data/CRU/pre` folder is where to put `nc` files downloaded from the CRU website (see `data/CRU/pre/README.md` for more details). This code only runs if these files are there. If you are checking this directly from the archived repository (which does not contain a copy of the large `nc` files), you can skip this code and go directly to the script files that use its `csv` output, which is archived in this repo.
 
 We combine the various 10-year files into one `stars` object:
 
 ```{r load-stars}
-file_list <- list.files(here("data", "CRU", "tmp"), full.names = TRUE, pattern = "*.nc")
+file_list <- list.files(here("data", "CRU", "pre"), full.names = TRUE, pattern = "*.nc")
 
 cru <- read_stars(
   file_list,
@@ -41,7 +41,8 @@ For each month and year, we extract the values at the urban centroid* and arrang
 (*taking the centroid is fine, and make calculations faster, given the coarse size of CRU-TS grid cells)
 
 ```{r cru-tbl}
-cru_tbl <- st_extract(cru, at = coords) |>
+cru_tbl <- st_extract(cru["pre"], at = coords) |> 
+  # some issues with ancillary variables here but absent from tmp, so extract only pre here
   as_tibble() |>
   mutate(
     year = year(time),
@@ -53,16 +54,9 @@ cru_tbl <- st_extract(cru, at = coords) |>
 
 ```{r quality-check}
 ggplot(cru_tbl) +
-  geom_line(aes(time, tmp)) +
-  facet_wrap(~urban_area)
-
-ggplot(cru_tbl) +
-  geom_line(aes(time, stn)) + # number of stations contributing to an obs
+  geom_line(aes(time, pre)) +
   facet_wrap(~urban_area)
 ```
-
-For St John's we have a clear drop in quality starting 2015 (fewer stations available for some areas). 
-The solution is to not use the most recent values. While the decline starts in 2015, we put the cut-off at 2020 since there's still a majority of stations before.
 
 Then, for each of the years we decide to keep, we calculate the annual values from the monthly values...
 
@@ -73,21 +67,21 @@ clim_end <- 2020
 tab <- cru_tbl |>
   select(-geom) |>
   filter(year <= clim_end & year > (clim_end - clim_interval)) |>
-  select(c(tmp, month, year, urban_area)) |>
+  select(c(pre, month, year, urban_area)) |>
   group_by(urban_area, year) |>
-  nest(data = c(tmp, month)) |>
+  nest(data = c(pre, month)) |>
   mutate(
-    annual_tmp = map(
+    annual_pre = map(
       .x = data,
       .f = function(.x) {
-        annual_tmp <- mean(.x$tmp)
+        annual_pre <- sum(.x$pre)
       }
     )
   ) |>
-  unnest(annual_tmp) |>
+  unnest(annual_pre) |>
   select(
     urban_area, year,
-    annual_tmp
+    annual_pre
   )
 ```
 
@@ -99,12 +93,12 @@ tab_avg <- tab |>
   mutate(year_range_CRU = paste(min(year), max(year), sep = "-"), .after = 2) |>
   select(-year) |>
   group_by(year_range_CRU, .add = TRUE) |>
-  summarise(annual_tmp = mean(annual_tmp)) |>
+  summarise(annual_pre = mean(annual_pre)) |>
   ungroup()
 ```
 
 We can save these values to use later:
 
 ```{r save-CRU}
-write_csv(tab_avg, here("data", paste0("CRUtmp_", tab_avg$year_range_CRU[1], ".csv")))
+write_csv(tab_avg, here("data", paste0("CRUpre_", tab_avg$year_range_CRU[1], ".csv")))
 ```
