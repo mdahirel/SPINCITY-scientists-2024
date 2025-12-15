@@ -6,13 +6,14 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(brms) # CRAN v2.22.0
-library(metafor) # CRAN v4.8-0
+library(brms)      # CRAN v2.23.0
+library(legendry)  # CRAN v0.2.4
+library(metafor)   # CRAN v4.8-0
 library(tidyverse) # CRAN v2.0.0
-library(here) # CRAN v1.0.1
-library(patchwork) # CRAN v1.3.0
+library(here)      # CRAN v1.0.2
+library(patchwork) # CRAN v1.3.2
 library(tidybayes) # CRAN v3.0.7
-library(ggtext) # CRAN v0.1.2
+library(ggtext)    # CRAN v0.1.2
 
 options(mc.cores = 4)
 ```
@@ -28,6 +29,8 @@ data_allscales <- read_csv(here("data", "final_dataset_meta_analyses.csv"))
 data <- data_allscales |>
   group_by(response_name, urban_area, year, team) |>
   filter(AICc_baseline == min(AICc_baseline)) |>
+  # if two spatial scales have exactly the same AIC, we keep the lowest
+  filter(urban_scale == min(urban_scale)) |> 
   mutate(
     yi = case_when(is.autocor.spatial ~ yi_spatial, TRUE ~ yi_baseline),
     vi = case_when(is.autocor.spatial ~ vi_spatial, TRUE ~ vi_baseline)
@@ -47,7 +50,9 @@ data2 <- data_allscales |>
     yi = case_when(is.autocor.spatial ~ yi_spatial, TRUE ~ yi_baseline),
     vi = case_when(is.autocor.spatial ~ vi_spatial, TRUE ~ vi_baseline)
   ) |>
-  filter(abs(yi) == max(abs(yi)))
+  filter(abs(yi) == max(abs(yi))) |>
+  # if two spatial scales have exactly the same yi, we keep the lowest
+  filter(urban_scale == min(urban_scale))
 ```
 
 ```{r compare-ES-filters}
@@ -56,24 +61,45 @@ plot(data$yi, data2$yi)
 ```
 
 ```{r plot-retained-scales}
-ggplot(data) +
-  geom_boxplot(
-    aes(
-      response_name,
-      y = urban_scale
+plot_retained_scales <- data |>
+  ungroup() |>
+  mutate(
+    response_name_full = case_when(
+      response_name == "brightness" ~ "abdomen brightness",
+      response_name == "log_abdomen" ~ "relative abdomen area",
+      response_name == "spider_length" ~ "spider length",
+      response_name == "radius" ~ "web radius",
+      response_name == "mesh_size" ~ "mesh width",
     )
-  ) +
-  geom_point(
-    aes(
-      response_name,
-      y = urban_scale
-    ),
-    col = "darkgrey", position = position_jitter(height = 0)
-  ) +
-  scale_x_discrete("Outcome") +
-  scale_y_continuous("Retained scale of effect (buffer radius, m)") +
-  theme_bw()
+  ) |>
+  mutate(response_name_full = fct_relevel(
+    response_name_full,
+    "spider length", "relative abdomen area",
+    "mesh width", "web radius",
+    "abdomen brightness"
+  )) |>
+  ggplot() +
+  geom_bar(aes(response_name_full, fill = urban_scale, group = urban_scale), position = "fill") +
+  labs(fill = "spatial scale of effect of urbanization (m)") +
+  scale_fill_distiller(type = "seq", palette = "Purples") +
+  scale_x_discrete("") +
+  scale_y_continuous("proportion of effect sizes") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+
+plot_retained_scales
 ```
+
+```{r save-retained-scales-plot, dev='cairo_pdf'}
+ggsave(here("plots", "SUPPL_retained_scales.pdf"),
+  plot = plot_retained_scales, width = 7, height = 4
+)
+
+ggsave(here("plots", "SUPPL_retained_scales.png"),
+  plot = plot_retained_scales, width = 7, height = 4
+)
+```
+
 
 # Bayesian metaanalysis
 
@@ -84,7 +110,7 @@ https://doi.org/10.1002/jrsm.1475
 
 ### Justifying the choice of prior scales
 
-Based on Senior et al 2016 (https://doi.org/10.1002/ecy.1591), we'd expect typical heterogeneity % to be in the high range for ecological data (the paper mention an average around 90% in the range of meta-analyses they checked). We can do a bit of prior predictive check, using the sampling variances for each effect size:
+Based on Senior et al 2016 (https://doi.org/10.1002/ecy.1591), we'd expect typical heterogeneity % to be in the high range for ecological data. We can do a bit of prior predictive check, using the sampling variances for each effect size:
 
 ```{r within-study-variances}
 vres_tab <- data |>
@@ -105,37 +131,89 @@ Assuming the SDs of the between study random effects have a half-Normal prior, w
 
 ```{r prior-check-1}
 set.seed(42)
-priorSD <- 0.4
 
-test <- vres_tab |>
-  expand_grid(
+test <- tibble(
+  var_res = mean(vres_tab$var_res),
+  priorSD = c(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)
+) |>
+  group_by(priorSD) |>
+  mutate(simulated_vars = map(.x = priorSD, .f = function(.x) {
     tibble(
       var_lvl1 = (abs(rnorm(10000, 0, priorSD)))^2,
       var_lvl2 = (abs(rnorm(10000, 0, priorSD)))^2
     )
-  ) |>
+  })) |>
+  unnest(cols = simulated_vars) |>
   mutate(priorI2 = (var_lvl1 + var_lvl2) / (var_lvl1 + var_lvl2 + var_res))
 
-ggplot(test) +
-  stat_halfeye(aes(priorI2, response_name), point_interval = "mean_qi") +
-  geom_vline(xintercept = 0.9)
+p_prior_I2 <- ggplot(test) +
+  geom_violin(aes(factor(priorSD), priorI2), fill = "#998ec3", col = "#998ec3", scale = "width") +
+  geom_hline(yintercept = 0.8467, linetype = 1) + # median from senior et al 2016
+  geom_hline(yintercept = 0.9169, linetype = 2) + # mean
+  stat_summary(aes(factor(priorSD), priorI2),
+    fun = "median", fun.min = "median", fun.max = "median",
+    pch = 21, fill = "black", size = 0.7
+  ) +
+  stat_summary(aes(factor(priorSD), priorI2),
+    fun = "mean", fun.min = "mean", fun.max = "mean",
+    pch = 21, fill = "white", size = 0.7
+  ) +
+  scale_x_discrete("scale value for the random effect prior") +
+  scale_y_continuous("resulting prior relative heterogeneity *I*^2^") +
+  theme_bw() +
+  theme(axis.title.y = element_markdown())
+
+p_prior_I2
 ```
 
-we can also have a look at the implied prior for the partition between the two RE levels
-```{r prior-check-2}
-ggplot(test) +
-  stat_halfeye(aes(var_lvl1 / (var_lvl1 + var_lvl2), response_name), point_interval = "mean_qi")
-```
+a $\mathrm{HalfNormal}(0,0.4)$ on random effects SDs would seem to behave well for both median and mean; priors much with smaller or larger scales tend to undershoot or overshoot expectations, respectively.
 
-a $\mathrm{HalfNormal}(0,0.4)$ on random effects SD would seem to behave well for both. A `priorSD` slightly smaller or larger (0.3 or 0.5) would likely work too, but in the latter the implied prior around heterogeneity seems overly narrow.
 For the fixed effect priors, we follow the idea in Röver et al (https://doi.org/10.1002/jrsm.1475) that there is a link with the expected prior heterogeneity (so the total RE variance).
 
 ```{r prior-check-3}
-ggplot(test) +
-  stat_halfeye(aes(sqrt(var_lvl1 + var_lvl2), response_name), point_interval = "mean_qi")
+p_prior_bwSD <- ggplot(test) +
+  geom_violin(aes(factor(priorSD), sqrt(var_lvl1 + var_lvl2)), fill = "#998ec3", col = "#998ec3", scale = "width") +
+  stat_summary(aes(factor(priorSD), sqrt(var_lvl1 + var_lvl2)),
+    fun = "median", fun.min = "median", fun.max = "median",
+    pch = 21, fill = "black", size = 0.7
+  ) +
+  stat_summary(aes(factor(priorSD), sqrt(var_lvl1 + var_lvl2)),
+    fun = "mean", fun.min = "mean", fun.max = "mean",
+    pch = 21, fill = "white", size = 0.7
+  ) +
+  scale_x_discrete("scale value for the random effect prior") +
+  scale_y_continuous("resulting prior for the total between-studies SD") +
+  theme_bw()
+
+p_prior_bwSD
 ```
 
-For `priorSD` = 0.4, this falls around 0.5, but again, slight changes do not change the result much.
+For `priorSD` = 0.4, this falls around 0.5.
+
+Let's save these plots for supplementary material
+
+```{r combine-prior-plots}
+plot_prior <- (p_prior_I2 / p_prior_bwSD) + plot_layout(axis_titles = "collect")
+plot_prior_horizontal <- (p_prior_I2 | p_prior_bwSD) + plot_layout(axis_titles = "collect")
+```
+
+```{r save-prior-plots, dev='cairo_pdf'}
+ggsave(here("plots", "SUPPL_prior_I2.pdf"),
+  plot = plot_prior, width = 4, height = 7
+)
+
+ggsave(here("plots", "SUPPL_prior_I2.png"),
+  plot = plot_prior, width = 4, height = 7
+)
+
+ggsave(here("plots", "SUPPL_prior_I2_horizontal.pdf"),
+  plot = plot_prior_horizontal, width = 8, height = 4
+)
+
+ggsave(here("plots", "SUPPL_prior_I2_horizontal.png"),
+  plot = plot_prior_horizontal, width = 8, height = 4
+)
+```
 
 We can now move to the models
 
@@ -172,7 +250,7 @@ modint_mesh <- fit_meta_int(data, "mesh_size")
 summary(modint_size)
 ## look at Rhat and ESSs
 pp_check(modint_size)
-pp_check(modint_size,"pit_ecdf")
+pp_check(modint_size, "pit_ecdf")
 ## see help to see what other posterior predictive checks may be useful
 ```
 
@@ -289,7 +367,8 @@ vres_tab <- data |>
   filter(!is.na(yi)) |>
   group_by(response_name) |>
   summarise(k = length(yi), sum_wi = sum(1 / vi), sum_wi_squared = sum((1 / (vi))^2)) |>
-  mutate(var_res = (k - 1) * sum_wi / (sum_wi^2 - sum_wi_squared)) ## formula to double check, see https://www.metafor-project.org/doku.php/tips:i2_multilevel_multivariate?s[]=heterogeneity
+  mutate(var_res = (k - 1) * sum_wi / (sum_wi^2 - sum_wi_squared))
+## see https://www.metafor-project.org/doku.php/tips:i2_multilevel_multivariate?s[]=heterogeneity
 # and Nakagawa et al 2023 paper
 
 get_varcomps <- function(model) {
@@ -344,7 +423,6 @@ tab_overall <- left_join(overall_fits, varcomps) |>
     var_rand, var_rand.lower, var_rand.upper,
     p_between, p_between.lower, p_between.upper
   )
-
 
 
 table1 <- tab_overall |>
@@ -483,6 +561,7 @@ ggsave(here("plots", "fig4.png"), plot = caterplot, width = 9, height = 6)
 
 #### "forest" plots
 
+The first version, used in first drafts
 
 ```{r make-forest-plot-function}
 make_forest_plot <- function(ES_fits, PI_fits, overall_fits, ES_observed, plot_annotations, response) {
@@ -534,13 +613,95 @@ make_forest_plot <- function(ES_fits, PI_fits, overall_fits, ES_observed, plot_a
 }
 ```
 
+A second version, that groups and reorders effect sizes by countries. The first version above is kept as a useful check to make sure we have a way to double check everything is reordered correctly
+
+```{r make-forest-plot-function2}
+make_forest_plot2 <- function(ES_fits, PI_fits, overall_fits, ES_observed, plot_annotations, response) {
+  study_list <- filter(ES_observed, response_name == response) |>
+    ungroup() |>
+    select(country, study)
+  reordered_studies <- function(study_list) {
+    arrange(study_list, country, study)
+  }
+
+  key <- reordered_studies(study_list) |>
+    mutate(studyY = 1:length(study)) |>
+    group_by(country) |>
+    summarize(start = min(studyY), end = max(studyY))
+
+  key <- key_range_manual(
+    start = (max(key$end) + 1.25) - key$start, end = (max(key$end) + 0.75) - key$end, name = key$country
+  )
+
+  p_main <- ggplot() +
+    stat_lineribbon(
+      data = expand_grid(PI_fits |> filter(response_name == response), 
+                         study_list|> 
+                           mutate(study = fct_relevel(
+                             study,
+                             reordered_studies(study_list)$study))
+                         )
+      ,
+      aes(x = overall.PI, y = study), .width = 0.95, fill = pale_colour
+    ) +
+    stat_lineribbon(
+      data = expand_grid(overall_fits |> filter(response_name == response), 
+                         study_list|> 
+                           mutate(study = fct_relevel(
+                             study,
+                             reordered_studies(study_list)$study))),
+      aes(x = overall.epred, y = study), .width = 0.95, fill = main_colour
+    ) +
+    stat_pointinterval(
+      data = ES_fits |> filter(response_name == response),
+      aes(x = .epred, y = study), .width = c(0, 0.95),
+    ) +
+    geom_point(
+      data = left_join(ES_observed, plot_annotations) |> filter(response_name == response),
+      aes(x = yi, y = study, size = 1 / vi),
+      pch = 21, fill = "white", alpha = 0.5
+    ) +
+    geom_vline(xintercept = 0, linetype = 2) +
+    scale_y_discrete("", limits = rev) +
+    scale_x_continuous("effect size (Zr)") +
+    coord_cartesian(xlim = c(-1.2, 1.2)) +
+    facet_wrap(~full_names) +
+    guides(
+      y = compose_stack(
+        primitive_ticks(),
+        primitive_labels(),
+        primitive_bracket(key = key)
+      )
+    ) +
+    theme_bw() +
+    theme(legend.position = "none")
+
+
+  arrows_annotate <- plot_annotations |>
+    filter(response_name == response) |>
+    pivot_longer(
+      cols = c(negative_annotation, positive_annotation),
+      values_to = "label"
+    ) |>
+    mutate(x = c(-0.4, 0.4)) |>
+    ggplot() +
+    geom_segment(aes(x = x * 0.25, xend = x * 0.8, y = 0, yend = 0),
+      arrow = arrow(type = "closed", angle = 15, length = unit(0.5, "cm"))
+    ) +
+    geom_text(aes(x = 0.9 * x, y = 0, label = label, hjust = c(1, 0))) +
+    coord_cartesian(xlim = c(-0.8, 0.8)) +
+    theme_void()
+
+  (p_main / arrows_annotate) + plot_layout(heights = c(0.85, 0.15))
+}
+```
 
 ```{r make-forest-plots}
-plot_abdomen <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "log_abdomen")
-plot_size <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "spider_length")
-plot_radius <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "radius")
-plot_mesh <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "mesh_size")
-plot_brightness <- make_forest_plot(ES_fits, PI_fits, overall_fits, data, plot_annotations, "brightness")
+plot_abdomen <- make_forest_plot2(ES_fits, PI_fits, overall_fits, data, plot_annotations, "log_abdomen")
+plot_size <- make_forest_plot2(ES_fits, PI_fits, overall_fits, data, plot_annotations, "spider_length")
+plot_radius <- make_forest_plot2(ES_fits, PI_fits, overall_fits, data, plot_annotations, "radius")
+plot_mesh <- make_forest_plot2(ES_fits, PI_fits, overall_fits, data, plot_annotations, "mesh_size")
+plot_brightness <- make_forest_plot2(ES_fits, PI_fits, overall_fits, data, plot_annotations, "brightness")
 ```
 
 ```{r save-forest-plots, dev='cairo_pdf'}
@@ -572,16 +733,16 @@ plot_I2 <- ggplot(varcomps |> left_join(plot_annotations)) +
   scale_x_continuous("relative heterogeneity *I*^2^", limits = c(0, 1)) +
   scale_y_discrete("", limits = rev) +
   theme_bw() +
-  theme(axis.title = element_markdown())
+  theme(axis.title.x = element_markdown())
 
 plot_abs_heterogeneity <- ggplot(varcomps |> left_join(plot_annotations)) +
   stat_halfeye(aes(x = var_rand, y = full_names),
     .width = c(0, 0.95), fill = main_colour, point_interval = "mean_qi"
   ) +
-  scale_x_continuous("absolute heterogeneity &tau;^2^ + &sigma;^2^") +
+  scale_x_continuous("absolute heterogeneity \U03C4^2^ + \U03C3^2^") +
   scale_y_discrete("", limits = rev) +
   theme_bw() +
-  theme(axis.title = element_markdown())
+  theme(axis.title.x = element_markdown())
 
 plot_between_within <- ggplot(varcomps |> left_join(plot_annotations)) +
   stat_halfeye(aes(x = p_between, y = full_names),
@@ -590,27 +751,27 @@ plot_between_within <- ggplot(varcomps |> left_join(plot_annotations)) +
   scale_x_continuous("city-level repeatability", limits = c(0, 1)) +
   scale_y_discrete("", limits = rev) +
   theme_bw() +
-  theme(axis.title = element_markdown())
+  theme(axis.title.x = element_markdown())
 ```
 
 
 ```{r save-heterogeneity-plots, dev='cairo_pdf'}
 ggsave(here("plots", "SUPPL_I2.pdf"),
-  plot = plot_I2, width = 5, height = 5
+  plot = plot_I2, width = 5, height = 5, device = cairo_pdf
 )
 ggsave(here("plots", "SUPPL_I2.png"),
   plot = plot_I2, width = 5, height = 5
 )
 
 ggsave(here("plots", "SUPPL_abs_heterogeneity.pdf"),
-  plot = plot_abs_heterogeneity, width = 5, height = 5
+  plot = plot_abs_heterogeneity, width = 5, height = 5, device = cairo_pdf
 )
 ggsave(here("plots", "SUPPL_abs_heterogeneity.png"),
   plot = plot_abs_heterogeneity, width = 5, height = 5
 )
 
 ggsave(here("plots", "SUPPL_between_within.pdf"),
-  plot = plot_between_within, width = 5, height = 5
+  plot = plot_between_within, width = 5, height = 5, device = cairo_pdf
 )
 ggsave(here("plots", "SUPPL_between_within.png"),
   plot = plot_between_within, width = 5, height = 5

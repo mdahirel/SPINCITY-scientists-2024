@@ -6,13 +6,14 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(brms) # CRAN v2.22.0
-library(metafor) # CRAN v4.8-0
-library(tidyverse) # CRAN v2.0.0
-library(here) # CRAN v1.0.1
-library(patchwork) # CRAN v1.3.0
-library(tidybayes) # CRAN v3.0.7
-library(ggtext) # CRAN v0.1.2
+library(brms)         # CRAN v2.23.0
+library(metafor)      # CRAN v4.8-0
+library(Hmisc)        # CRAN v5.2-4
+library(tidyverse)    # CRAN v2.0.0
+library(here)         # CRAN v1.0.2
+library(patchwork)    # CRAN v1.3.2
+library(tidybayes)    # CRAN v3.0.7
+library(ggtext)       # CRAN v0.1.2
 
 options(mc.cores = 4)
 ```
@@ -28,11 +29,36 @@ data_allscales <- read_csv(here("data", "final_dataset_meta_analyses.csv"))
 data <- data_allscales |>
   group_by(response_name, urban_area, year, team) |>
   filter(AICc_baseline == min(AICc_baseline)) |>
+  # if two spatial scales have exactly the same AIC, we keep the lowest
+  filter(urban_scale == min(urban_scale)) |> 
   mutate(
     yi = case_when(is.autocor.spatial ~ yi_spatial, TRUE ~ yi_baseline),
     vi = case_when(is.autocor.spatial ~ vi_spatial, TRUE ~ vi_baseline)
   )
 ```
+
+# Correlation between moderators
+
+It can be useful to check if our city-level moderators are correlated. In addition, we are adding to the correlation matrix two more variables: precipitation, to confirm that it is correlated to temperature in our sample (explaining why we only use one of the two), and latitude, because of its potential link with many variables
+
+```{r moderators-correlation}
+data |> 
+  group_by(urban_area) |> 
+  summarise(
+    tmp=mean(annual_tmp),
+    logarea=mean(log(area_LAND_km2,10)),
+    human_modif=mean(mean_human_modification_50km),
+    pTREE=mean(mean_pTREE),
+    yday=mean(mean_yday_prop), # we take the average city-level value for cities visited multiple times
+    latitude=mean(lat),
+    pre=mean(annual_pre)
+    )  |> 
+  ungroup() |> 
+  select(-c(urban_area)) |> 
+  as.matrix() |> 
+  Hmisc::rcorr()
+```
+
 
 # Bayesian metaregression
 

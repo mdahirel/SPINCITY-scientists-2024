@@ -6,13 +6,13 @@ editor_options:
 ---
 
 ```{r load-packages}
-library(brms) # CRAN v2.22.0
-library(metafor) # CRAN v4.8-0
-library(tidyverse) # CRAN v2.0.0
-library(here) # CRAN v1.0.1
-library(patchwork) # CRAN v1.3.0
-library(tidybayes) # CRAN v3.0.7
-library(ggtext) # CRAN v0.1.2
+library(brms)      # CRAN v2.23.0 
+library(metafor)   # CRAN v4.8-0 
+library(tidyverse) # CRAN v2.0.0 
+library(here)      # CRAN v1.0.2 
+library(patchwork) # CRAN v1.3.2 
+library(tidybayes) # CRAN v3.0.7 
+library(ggtext)    # CRAN v0.1.2 
 
 options(mc.cores = 4)
 ```
@@ -28,6 +28,8 @@ data_allscales <- read_csv(here("data", "final_dataset_meta_analyses.csv"))
 data <- data_allscales |>
   group_by(response_name, urban_area, year, team) |>
   filter(AICc_baseline == min(AICc_baseline)) |>
+  # if two spatial scales have exactly the same AIC, we keep the lowest
+  filter(urban_scale == min(urban_scale)) |> 
   mutate(
     yi = case_when(is.autocor.spatial ~ yi_spatial, TRUE ~ yi_baseline),
     vi = case_when(is.autocor.spatial ~ vi_spatial, TRUE ~ vi_baseline)
