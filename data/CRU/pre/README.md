@@ -12,4 +12,4 @@ To re-run `R/01b_get_precipitation_CRU.qmd`, large files from the CRU-TS archive
 
 - `cru_ts4.08.2021.2023.pre.dat.nc`
 
-The output file resulting from running `R/01b_get_precipitation_CRU.qmd`, which contains average annual temperature for each focal urban area, **is** included in `data` (`CRUpre_1991-2020.csv`), so users can re-run downstream analyses without doing so, though.
+The output file resulting from running `R/01b_get_precipitation_CRU.qmd`, which contains average annual precipitation for each focal urban area, **is** included in `data` (`CRUpre_1991-2020.csv`), so users can re-run downstream analyses without doing so, though.
